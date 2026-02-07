@@ -69,7 +69,7 @@ export async function createChatCompletion(
 
 /**
  * Create a streaming chat completion
- * Returns an async generator that yields chunks of the response
+ * For React Native, we use non-streaming and simulate streaming by yielding the full response
  */
 export async function* createStreamingChatCompletion(
   options: ChatCompletionOptions
@@ -78,6 +78,7 @@ export async function* createStreamingChatCompletion(
     throw new Error('OpenAI API key not configured');
   }
 
+  // React Native doesn't support ReadableStream, so we use non-streaming
   const response = await fetch(OPENAI_API_URL, {
     method: 'POST',
     headers: {
@@ -89,7 +90,7 @@ export async function* createStreamingChatCompletion(
       messages: options.messages,
       temperature: options.temperature ?? 0.7,
       max_tokens: options.maxTokens ?? 500,
-      stream: true,
+      stream: false, // Changed to false for React Native compatibility
     }),
   });
 
@@ -98,43 +99,15 @@ export async function* createStreamingChatCompletion(
     throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error('Response body is not readable');
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const content = parsed.choices[0]?.delta?.content;
-            if (content) {
-              yield content;
-            }
-          } catch (e) {
-            // Skip invalid JSON
-            continue;
-          }
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
+  const data: ChatCompletionResponse = await response.json();
+  const content = data.choices[0]?.message?.content || '';
+  
+  // Simulate streaming by yielding words with small delays
+  const words = content.split(' ');
+  for (let i = 0; i < words.length; i++) {
+    yield words[i] + (i < words.length - 1 ? ' ' : '');
+    // Small delay to simulate streaming (optional)
+    await new Promise(resolve => setTimeout(resolve, 30));
   }
 }
 
