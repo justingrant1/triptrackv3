@@ -17,6 +17,11 @@ const REVENUECAT_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY!;
  */
 export async function initializeRevenueCat(userId: string) {
   try {
+    // Validate API key exists
+    if (!REVENUECAT_API_KEY || REVENUECAT_API_KEY === 'undefined') {
+      throw new Error('EXPO_PUBLIC_REVENUECAT_API_KEY is not configured. Please add it to your EAS environment variables.');
+    }
+    
     // Configure SDK
     Purchases.setLogLevel(LOG_LEVEL.DEBUG); // Change to INFO in production
     
@@ -45,6 +50,11 @@ export async function getOfferings(): Promise<PurchasesOfferings | null> {
     
     if (offerings.current !== null) {
       console.log('📦 Available offerings:', offerings.current.availablePackages.length);
+      console.log('📦 Package details:', offerings.current.availablePackages.map(pkg => ({
+        identifier: pkg.identifier,
+        packageType: pkg.packageType,
+        price: pkg.product.priceString,
+      })));
       return offerings;
     }
     

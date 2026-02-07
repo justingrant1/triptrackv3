@@ -124,17 +124,72 @@ export function UpgradeModal({ visible, onClose, reason }: UpgradeModalProps) {
         throw new Error('No subscription packages available');
       }
 
-      // Use SDK's built-in monthly and annual properties
+      const packages = offerings.current.availablePackages;
+      
+      // Try SDK convenience properties first
       let selectedPackage = billingPeriod === 'monthly' 
         ? offerings.current.monthly 
         : offerings.current.annual;
       
-      // Fallback: if selected package not found, try the opposite billing period
+      // Fallback: search availablePackages if convenience property is null
       if (!selectedPackage) {
-        console.warn(`⚠️ ${billingPeriod} package not found, trying fallback...`);
+        console.warn(`⚠️ ${billingPeriod} SDK property null, searching availablePackages...`);
+        
+        selectedPackage = packages.find(pkg => {
+          const id = pkg.identifier?.toLowerCase() || '';
+          const type = String(pkg.packageType || '').toUpperCase();
+          
+          if (billingPeriod === 'monthly') {
+            return (
+              id.includes('monthly') || 
+              id === '$rc_monthly' || 
+              type === 'MONTHLY' ||
+              type.includes('MONTH')
+            );
+          } else {
+            return (
+              id.includes('annual') || 
+              id.includes('yearly') ||
+              id === '$rc_annual' || 
+              type === 'ANNUAL' ||
+              type === 'YEARLY' ||
+              type.includes('YEAR')
+            );
+          }
+        }) || null;
+      }
+      
+      // Last resort: try the opposite billing period
+      if (!selectedPackage) {
+        console.warn(`⚠️ ${billingPeriod} package not found, trying opposite...`);
         selectedPackage = billingPeriod === 'monthly' 
           ? offerings.current.annual 
           : offerings.current.monthly;
+        
+        if (!selectedPackage) {
+          selectedPackage = packages.find(pkg => {
+            const id = pkg.identifier?.toLowerCase() || '';
+            const type = String(pkg.packageType || '').toUpperCase();
+            
+            if (billingPeriod === 'annual') {
+              return (
+                id.includes('monthly') || 
+                id === '$rc_monthly' || 
+                type === 'MONTHLY' ||
+                type.includes('MONTH')
+              );
+            } else {
+              return (
+                id.includes('annual') || 
+                id.includes('yearly') ||
+                id === '$rc_annual' || 
+                type === 'ANNUAL' ||
+                type === 'YEARLY' ||
+                type.includes('YEAR')
+              );
+            }
+          }) || null;
+        }
         
         if (selectedPackage) {
           console.log(`✅ Using ${billingPeriod === 'monthly' ? 'annual' : 'monthly'} package as fallback`);

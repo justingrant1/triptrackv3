@@ -229,12 +229,47 @@ export default function SubscriptionScreen() {
       const offerings = await getOfferings();
       
       if (offerings?.current) {
-        // Use SDK's built-in monthly and annual properties
-        const monthly = offerings.current.monthly;
-        const annual = offerings.current.annual;
+        const packages = offerings.current.availablePackages;
         
-        setMonthlyPackage(monthly || null);
-        setAnnualPackage(annual || null);
+        // Try SDK convenience properties first
+        let monthly = offerings.current.monthly;
+        let annual = offerings.current.annual;
+        
+        // Fallback: search availablePackages if convenience properties are null
+        if (!monthly || !annual) {
+          console.log('⚠️ SDK convenience properties null, searching availablePackages...');
+          
+          if (!monthly) {
+            monthly = packages.find(pkg => {
+              const id = pkg.identifier?.toLowerCase() || '';
+              const type = String(pkg.packageType || '').toUpperCase();
+              return (
+                id.includes('monthly') || 
+                id === '$rc_monthly' || 
+                type === 'MONTHLY' ||
+                type.includes('MONTH')
+              );
+            }) || null;
+          }
+          
+          if (!annual) {
+            annual = packages.find(pkg => {
+              const id = pkg.identifier?.toLowerCase() || '';
+              const type = String(pkg.packageType || '').toUpperCase();
+              return (
+                id.includes('annual') || 
+                id.includes('yearly') ||
+                id === '$rc_annual' || 
+                type === 'ANNUAL' ||
+                type === 'YEARLY' ||
+                type.includes('YEAR')
+              );
+            }) || null;
+          }
+        }
+        
+        setMonthlyPackage(monthly);
+        setAnnualPackage(annual);
         
         console.log('📦 Loaded packages:', {
           monthly: monthly ? getPackageDetails(monthly) : 'NOT FOUND',
