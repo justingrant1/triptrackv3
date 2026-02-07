@@ -2,7 +2,7 @@
   "expo": {
     "name": "TripTrack",
     "slug": "triptrack",
-    "scheme": "triptrack",
+    "scheme": ["triptrack", "com.googleusercontent.apps.970308936264-ujmm0seople04r8s0vgo018a5f2hj4cn"],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./src/assets/icon.png",

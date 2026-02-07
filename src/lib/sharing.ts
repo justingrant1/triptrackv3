@@ -19,14 +19,22 @@ export function generateTripDeepLink(tripId: string): string {
  * Generate a shareable message for a trip
  */
 export function generateTripShareMessage(trip: Trip): string {
-  const deepLink = generateTripDeepLink(trip.id);
+  const startDate = new Date(trip.start_date).toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric',
+    year: 'numeric'
+  });
+  const endDate = new Date(trip.end_date).toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric',
+    year: 'numeric'
+  });
   
-  return `Check out my trip to ${trip.destination}! 🌍
+  return `🌍 ${trip.name}
+📍 ${trip.destination}
+📅 ${startDate} - ${endDate}
 
-${trip.name}
-${new Date(trip.start_date).toLocaleDateString()} - ${new Date(trip.end_date).toLocaleDateString()}
-
-View in TripTrack: ${deepLink}`;
+Shared from TripTrack ✈️`;
 }
 
 /**
@@ -40,7 +48,7 @@ export async function shareTripNative(trip: Trip): Promise<boolean> {
       {
         message,
         title: `Trip to ${trip.destination}`,
-        url: Platform.OS === 'ios' ? generateTripDeepLink(trip.id) : undefined,
+        // Note: url parameter removed - will be added when universal links are set up
       },
       {
         dialogTitle: `Share ${trip.name}`,

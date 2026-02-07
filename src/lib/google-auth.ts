@@ -39,11 +39,36 @@ function getClientId(): string {
 }
 
 /**
+ * Get the redirect URI scheme for OAuth
+ * For iOS: Use reversed client ID (required by Google)
+ * For Android: Use reversed client ID
+ * For Web: Use custom scheme
+ */
+function getRedirectScheme(): string {
+  if (Platform.OS === 'ios') {
+    // Reverse the iOS client ID to create the scheme
+    // e.g., "970308936264-ujmm0seople04r8s0vgo018a5f2hj4cn.apps.googleusercontent.com"
+    // becomes "com.googleusercontent.apps.970308936264-ujmm0seople04r8s0vgo018a5f2hj4cn"
+    const clientId = GOOGLE_CLIENT_ID_IOS;
+    const parts = clientId.split('.');
+    return parts.reverse().join('.');
+  } else if (Platform.OS === 'android') {
+    // Android also uses reversed client ID
+    const clientId = GOOGLE_CLIENT_ID_ANDROID;
+    const parts = clientId.split('.');
+    return parts.reverse().join('.');
+  } else {
+    // Web/Expo Go uses custom scheme
+    return 'triptrack';
+  }
+}
+
+/**
  * Create an OAuth request configuration
  */
 export function useGoogleAuthRequest() {
   const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'triptrack',
+    scheme: getRedirectScheme(),
     path: 'oauth/callback',
   });
 

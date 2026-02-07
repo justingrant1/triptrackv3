@@ -17,6 +17,7 @@ import {
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { useTrips } from '@/lib/hooks/useTrips';
 import { useCreateReceipt } from '@/lib/hooks/useReceipts';
 import { supabase } from '@/lib/supabase';
@@ -140,13 +141,36 @@ export default function AddReceiptScreen() {
     setIsScanning(true);
 
     try {
+      // Read the image as base64
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // Create base64 data URI for OpenAI
+      const base64DataUri = `data:image/jpeg;base64,${base64}`;
+
+      // Extract receipt data using base64 (no upload needed for OCR)
+      const receiptData = await extractReceiptData(base64DataUri);
+
+      setMerchant(receiptData.merchant);
+      setAmount(receiptData.amount.toString());
+      if (receiptData.category) {
+        setSelectedCategory(receiptData.category);
+      }
+
+      // Now upload to Supabase for storage
       const fileName = `receipt-${Date.now()}.jpg`;
-      const response = await fetch(uri);
-      const blob = await response.blob();
       
+      // Convert base64 to ArrayBuffer for proper upload
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('receipts')
-        .upload(fileName, blob, {
+        .upload(fileName, bytes.buffer, {
           contentType: 'image/jpeg',
         });
 
@@ -157,14 +181,6 @@ export default function AddReceiptScreen() {
         .getPublicUrl(fileName);
 
       setImageUrl(publicUrl);
-
-      const receiptData = await extractReceiptData(publicUrl);
-
-      setMerchant(receiptData.merchant);
-      setAmount(receiptData.amount.toString());
-      if (receiptData.category) {
-        setSelectedCategory(receiptData.category);
-      }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Receipt Scanned! ✨', 'Details extracted. Please review and adjust if needed.');

@@ -31,6 +31,7 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { useTrips, useDeleteTrip } from '@/lib/hooks/useTrips';
+import { useReservationCounts } from '@/lib/hooks/useReservations';
 import type { Trip } from '@/lib/types/database';
 import { formatDateRange, getDaysUntil } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
@@ -129,6 +130,7 @@ function CompactTripCardSkeleton({ index }: { index: number }) {
 function TripCard({ trip, index }: { trip: Trip; index: number }) {
   const router = useRouter();
   const deleteTrip = useDeleteTrip();
+  const { data: reservationCounts } = useReservationCounts(trip.id);
   const scale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -209,8 +211,8 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
       }
     })
     .onEnd(() => {
-      if (translateX.value < -70) {
-        // Snap to open
+      if (translateX.value < -40) {
+        // Snap to open (reduced threshold from -70 to -40)
         translateX.value = withSpring(-140);
         runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
       } else {
@@ -330,7 +332,7 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
               </View>
             </View>
 
-            {/* Bottom Section - Date */}
+            {/* Bottom Section - Date and Badges */}
             <View className="bg-slate-800/90 px-4 py-3 flex-row items-center justify-between">
               <View className="flex-row items-center">
                 <Calendar size={14} color="#64748B" />
@@ -338,7 +340,38 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
                   {formatDateRange(new Date(trip.start_date), new Date(trip.end_date))}
                 </Text>
               </View>
-              <ChevronRight size={16} color="#64748B" />
+              <View className="flex-row items-center gap-3">
+                {/* Reservation Count Badges */}
+                {reservationCounts && (
+                  <>
+                    {reservationCounts.flight > 0 && (
+                      <View className="flex-row items-center">
+                        <Plane size={14} color="#64748B" />
+                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          {reservationCounts.flight}
+                        </Text>
+                      </View>
+                    )}
+                    {reservationCounts.hotel > 0 && (
+                      <View className="flex-row items-center">
+                        <Building2 size={14} color="#64748B" />
+                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          {reservationCounts.hotel}
+                        </Text>
+                      </View>
+                    )}
+                    {reservationCounts.car > 0 && (
+                      <View className="flex-row items-center">
+                        <Car size={14} color="#64748B" />
+                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          {reservationCounts.car}
+                        </Text>
+                      </View>
+                    )}
+                  </>
+                )}
+                <ChevronRight size={16} color="#64748B" />
+              </View>
             </View>
             </View>
           </Pressable>
@@ -416,7 +449,8 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
       }
     })
     .onEnd(() => {
-      if (translateX.value < -70) {
+      if (translateX.value < -40) {
+        // Snap to open (reduced threshold from -70 to -40)
         translateX.value = withSpring(-140);
         runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
       } else {

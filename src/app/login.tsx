@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -30,7 +30,7 @@ function AppleLogo() {
 
 export default function LoginScreen() {
   const { width, height } = useWindowDimensions();
-  const [isLogin, setIsLogin] = useState(true);
+  const [isLogin, setIsLogin] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -43,7 +43,8 @@ export default function LoginScreen() {
   // Animation values
   const buttonScale = useSharedValue(1);
   const appleButtonScale = useSharedValue(1);
-  const toggleLeft = useSharedValue(4);
+  const toggleWidth = (width - 64 - 8) / 2;
+  const toggleLeft = useSharedValue(toggleWidth + 4); // Start on Sign Up tab
 
   // Clear error when switching between login/signup
   useEffect(() => {
@@ -108,7 +109,12 @@ export default function LoginScreen() {
           Alert.alert('Success', result.error);
         } else {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          router.replace('/(tabs)');
+          // For new signups, go to onboarding; for login, go to main app
+          if (isLogin) {
+            router.replace('/(tabs)');
+          } else {
+            router.replace('/onboarding');
+          }
         }
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -141,8 +147,6 @@ export default function LoginScreen() {
   const toggleIndicatorStyle = useAnimatedStyle(() => ({
     left: toggleLeft.value,
   }));
-
-  const toggleWidth = (width - 64 - 8) / 2;
 
   return (
     <View className="flex-1 bg-black">
@@ -205,7 +209,11 @@ export default function LoginScreen() {
               {/* Logo / Brand */}
               <View className="w-20 h-20 rounded-3xl bg-white/10 items-center justify-center mb-6 overflow-hidden">
                 <BlurView intensity={40} tint="dark" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-                <Text className="text-4xl font-bold text-white">T</Text>
+                <Image 
+                  source={require('@/assets/icon.png')} 
+                  style={{ width: 64, height: 64 }}
+                  resizeMode="contain"
+                />
               </View>
 
               <Text className="text-white text-3xl font-bold tracking-tight mb-2">

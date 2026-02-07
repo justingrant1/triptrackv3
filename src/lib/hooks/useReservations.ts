@@ -147,3 +147,41 @@ export function useUpcomingReservations() {
     },
   });
 }
+
+/**
+ * Get reservation counts by type for a trip
+ */
+export function useReservationCounts(tripId: string | undefined) {
+  return useQuery({
+    queryKey: ['reservations', 'counts', tripId],
+    queryFn: async () => {
+      if (!tripId) return { flight: 0, hotel: 0, car: 0, train: 0, meeting: 0, event: 0 };
+
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('type')
+        .eq('trip_id', tripId);
+
+      if (error) throw error;
+
+      const counts = {
+        flight: 0,
+        hotel: 0,
+        car: 0,
+        train: 0,
+        meeting: 0,
+        event: 0,
+      };
+
+      data.forEach((reservation) => {
+        const type = reservation.type as keyof typeof counts;
+        if (type in counts) {
+          counts[type]++;
+        }
+      });
+
+      return counts;
+    },
+    enabled: !!tripId,
+  });
+}

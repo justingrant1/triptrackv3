@@ -113,6 +113,7 @@ export async function* createStreamingChatCompletion(
 
 /**
  * Extract text from an image using GPT-4 Vision
+ * Supports both URLs and base64 data URIs
  */
 export async function extractTextFromImage(
   imageUrl: string,
@@ -164,7 +165,7 @@ export interface ReceiptData {
   currency?: string;
 }
 
-export async function extractReceiptData(imageUrl: string): Promise<ReceiptData> {
+export async function extractReceiptData(imageUrlOrBase64: string): Promise<ReceiptData> {
   const prompt = `Extract the following information from this receipt image and return it as JSON:
 {
   "merchant": "merchant name",
@@ -176,7 +177,7 @@ export async function extractReceiptData(imageUrl: string): Promise<ReceiptData>
 
 Only return the JSON, no other text.`;
 
-  const response = await extractTextFromImage(imageUrl, prompt);
+  const response = await extractTextFromImage(imageUrlOrBase64, prompt);
   
   try {
     // Try to parse JSON from the response
