@@ -1,24 +1,86 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, TextInput } from 'react-native';
+import { View, Text, ScrollView, Pressable, TextInput, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Camera } from 'lucide-react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { useTripStore } from '@/lib/store';
+import * as ImagePicker from 'expo-image-picker';
+import { useProfile, useUpdateProfile, uploadAvatar } from '@/lib/hooks/useProfile';
+import { useAuthStore } from '@/lib/state/auth-store';
 
 export default function EditProfileScreen() {
   const router = useRouter();
-  const user = useTripStore((s) => s.user);
+  const { user } = useAuthStore();
+  const { data: profile, isLoading } = useProfile();
+  const updateProfile = useUpdateProfile();
 
-  const [name, setName] = React.useState(user?.name ?? '');
-  const [email, setEmail] = React.useState(user?.email ?? '');
+  const [name, setName] = React.useState('');
+  const [uploading, setUploading] = React.useState(false);
 
-  const handleSave = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    router.back();
+  // Initialize form with profile data
+  React.useEffect(() => {
+    if (profile) {
+      setName(profile.name || '');
+    }
+  }, [profile]);
+
+  const handleSave = async () => {
+    try {
+      await updateProfile.mutateAsync({ name });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      router.back();
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Failed to update profile');
+    }
   };
+
+  const handlePickImage = async () => {
+    try {
+      // Request permission
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please grant photo library access to change your avatar');
+        return;
+      }
+
+      // Pick image
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0] && user?.id) {
+        setUploading(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+        // Upload to Supabase Storage
+        const avatarUrl = await uploadAvatar(user.id, result.assets[0].uri);
+
+        // Update profile with new avatar URL
+        await updateProfile.mutateAsync({ avatar_url: avatarUrl });
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Failed to upload avatar');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View className="flex-1 bg-slate-950 items-center justify-center">
+        <ActivityIndicator size="large" color="#3b82f6" />
+      </View>
+    );
+  }
 
   return (
     <View className="flex-1 bg-slate-950">
@@ -56,20 +118,35 @@ export default function EditProfileScreen() {
           {/* Avatar */}
           <Animated.View entering={FadeInDown.duration(500)} className="items-center py-8">
             <Pressable
-              onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+              onPress={handlePickImage}
+              disabled={uploading}
               className="relative"
             >
-              <View className="w-24 h-24 rounded-full bg-blue-500 items-center justify-center">
-                <Text className="text-white text-4xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                  {name.charAt(0) || 'A'}
-                </Text>
-              </View>
+              {profile?.avatar_url ? (
+                <View className="w-24 h-24 rounded-full overflow-hidden bg-slate-800">
+                  <Animated.Image
+                    source={{ uri: profile.avatar_url }}
+                    style={{ width: 96, height: 96 }}
+                    resizeMode="cover"
+                  />
+                </View>
+              ) : (
+                <View className="w-24 h-24 rounded-full bg-blue-500 items-center justify-center">
+                  <Text className="text-white text-4xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    {name.charAt(0) || user?.email?.charAt(0).toUpperCase() || 'A'}
+                  </Text>
+                </View>
+              )}
               <View className="absolute bottom-0 right-0 bg-slate-700 p-2 rounded-full border-2 border-slate-950">
-                <Camera size={16} color="#FFFFFF" />
+                {uploading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Camera size={16} color="#FFFFFF" />
+                )}
               </View>
             </Pressable>
             <Text className="text-slate-400 text-sm mt-3" style={{ fontFamily: 'DMSans_400Regular' }}>
-              Tap to change photo
+              {uploading ? 'Uploading...' : 'Tap to change photo'}
             </Text>
           </Animated.View>
 
@@ -93,16 +170,14 @@ export default function EditProfileScreen() {
               <Text className="text-slate-400 text-sm mb-2" style={{ fontFamily: 'DMSans_500Medium' }}>
                 Email
               </Text>
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                placeholder="Enter your email"
-                placeholderTextColor="#64748B"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                className="bg-slate-800/80 rounded-xl px-4 py-4 text-white border border-slate-700/50"
-                style={{ fontFamily: 'DMSans_400Regular', fontSize: 16 }}
-              />
+              <View className="bg-slate-800/40 rounded-xl px-4 py-4 border border-slate-700/30">
+                <Text className="text-slate-500 text-base" style={{ fontFamily: 'DMSans_400Regular' }}>
+                  {profile?.email || user?.email || 'No email'}
+                </Text>
+              </View>
+              <Text className="text-slate-500 text-xs mt-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+                Email cannot be changed
+              </Text>
             </View>
           </Animated.View>
 

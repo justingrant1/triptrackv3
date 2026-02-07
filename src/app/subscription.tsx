@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -10,10 +10,14 @@ import {
   Zap,
   Users,
   Crown,
+  RefreshCw,
 } from 'lucide-react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { useTripStore } from '@/lib/store';
+import { useProfile } from '@/lib/hooks/useProfile';
+import { getOfferings, purchasePackage, restorePurchases, getPackageDetails } from '@/lib/revenuecat';
+import { PurchasesPackage } from 'react-native-purchases';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface PlanFeature {
   text: string;
@@ -37,48 +41,53 @@ const plans: Plan[] = [
     id: 'free',
     name: 'Free',
     price: '$0',
-    period: '/month',
-    description: 'Perfect for occasional travelers',
+    period: '/forever',
+    description: 'Beautiful trip tracking, by hand',
     icon: <Zap size={24} color="#64748B" />,
     color: '#64748B',
     features: [
-      { text: 'Up to 3 trips', included: true },
-      { text: 'Basic itinerary parsing', included: true },
-      { text: 'Email forwarding', included: true },
-      { text: 'AI assistant', included: false },
-      { text: 'Expense tracking', included: false },
-      { text: 'Priority support', included: false },
+      { text: '3 active trips', included: true },
+      { text: 'Unlimited reservations', included: true },
+      { text: '10 receipts/month', included: true },
+      { text: '3 AI messages/day', included: true },
+      { text: 'Email parsing', included: false },
+      { text: 'Receipt OCR scanning', included: false },
+      { text: 'CSV/PDF exports', included: false },
+      { text: 'Gmail auto-scan', included: false },
     ],
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: '$15',
+    price: '$11.99',
     period: '/month',
-    description: 'For frequent business travelers',
+    description: 'Your trips, on autopilot',
     icon: <Sparkles size={24} color="#8B5CF6" />,
     color: '#8B5CF6',
     popular: true,
     features: [
       { text: 'Unlimited trips', included: true },
-      { text: 'Advanced AI parsing', included: true },
-      { text: 'Email forwarding', included: true },
-      { text: 'AI assistant', included: true },
-      { text: 'Expense tracking & export', included: true },
+      { text: 'Unlimited reservations', included: true },
+      { text: 'Unlimited receipts', included: true },
+      { text: 'Unlimited AI concierge', included: true },
+      { text: 'Email auto-parsing', included: true },
+      { text: 'Receipt OCR scanning', included: true },
+      { text: 'CSV & PDF exports', included: true },
+      { text: 'Gmail auto-scan', included: true },
       { text: 'Priority support', included: true },
     ],
   },
   {
     id: 'team',
     name: 'Team',
-    price: '$49',
+    price: '$39.99',
     period: '/month',
-    description: 'For teams and organizations',
+    description: 'Travel management for your team',
     icon: <Users size={24} color="#3B82F6" />,
     color: '#3B82F6',
     features: [
       { text: 'Everything in Pro', included: true },
-      { text: 'Up to 10 team members', included: true },
+      { text: '5 team members included', included: true },
       { text: 'Shared trip visibility', included: true },
       { text: 'Team expense reports', included: true },
       { text: 'Admin dashboard', included: true },
@@ -87,7 +96,14 @@ const plans: Plan[] = [
   },
 ];
 
-function PlanCard({ plan, isCurrentPlan, onSelect }: { plan: Plan; isCurrentPlan: boolean; onSelect: () => void }) {
+function PlanCard({ plan, isCurrentPlan, onSelect, isPurchasing, displayPrice, displayPeriod }: { 
+  plan: Plan; 
+  isCurrentPlan: boolean; 
+  onSelect: () => void; 
+  isPurchasing?: boolean;
+  displayPrice?: string;
+  displayPeriod?: string;
+}) {
   return (
     <Pressable onPress={onSelect} className="mb-4">
       <View
@@ -128,10 +144,10 @@ function PlanCard({ plan, isCurrentPlan, onSelect }: { plan: Plan; isCurrentPlan
 
         <View className="flex-row items-baseline mb-4">
           <Text className="text-white text-3xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-            {plan.price}
+            {displayPrice || plan.price}
           </Text>
           <Text className="text-slate-400 text-sm ml-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {plan.period}
+            {displayPeriod || plan.period}
           </Text>
         </View>
 
@@ -159,15 +175,30 @@ function PlanCard({ plan, isCurrentPlan, onSelect }: { plan: Plan; isCurrentPlan
           ))}
         </View>
 
-        {!isCurrentPlan && (
+        {!isCurrentPlan && plan.id === 'pro' && (
           <Pressable
             onPress={onSelect}
+            disabled={isPurchasing}
             className={`mt-4 py-3 rounded-xl items-center ${
               plan.popular ? 'bg-purple-500' : 'bg-slate-700'
             }`}
           >
+            {isPurchasing ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                Upgrade to Pro
+              </Text>
+            )}
+          </Pressable>
+        )}
+        {!isCurrentPlan && plan.id !== 'pro' && (
+          <Pressable
+            onPress={onSelect}
+            className="mt-4 py-3 rounded-xl items-center bg-slate-700"
+          >
             <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-              {plan.id === 'free' ? 'Downgrade' : 'Upgrade'}
+              {plan.id === 'free' ? 'Downgrade' : 'Coming Soon'}
             </Text>
           </Pressable>
         )}
@@ -178,12 +209,132 @@ function PlanCard({ plan, isCurrentPlan, onSelect }: { plan: Plan; isCurrentPlan
 
 export default function SubscriptionScreen() {
   const router = useRouter();
-  const user = useTripStore((s) => s.user);
-  const currentPlanId = user?.plan ?? 'free';
+  const queryClient = useQueryClient();
+  const { data: profile } = useProfile();
+  const currentPlanId = profile?.plan ?? 'free';
+  const [billingPeriod, setBillingPeriod] = React.useState<'monthly' | 'annual'>('annual');
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [isPurchasing, setIsPurchasing] = React.useState(false);
+  const [monthlyPackage, setMonthlyPackage] = React.useState<PurchasesPackage | null>(null);
+  const [annualPackage, setAnnualPackage] = React.useState<PurchasesPackage | null>(null);
 
-  const handleSelectPlan = (planId: string) => {
+  // Load offerings from RevenueCat
+  React.useEffect(() => {
+    loadOfferings();
+  }, []);
+
+  const loadOfferings = async () => {
+    setIsLoading(true);
+    try {
+      const offerings = await getOfferings();
+      
+      if (offerings?.current) {
+        // Find monthly and annual packages
+        const monthly = offerings.current.availablePackages.find(
+          pkg => pkg.identifier === '$rc_monthly' || pkg.packageType === 'MONTHLY'
+        );
+        const annual = offerings.current.availablePackages.find(
+          pkg => pkg.identifier === '$rc_annual' || pkg.packageType === 'ANNUAL'
+        );
+        
+        setMonthlyPackage(monthly || null);
+        setAnnualPackage(annual || null);
+        
+        console.log('📦 Loaded packages:', {
+          monthly: monthly ? getPackageDetails(monthly) : null,
+          annual: annual ? getPackageDetails(annual) : null,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load offerings:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSelectPlan = async (planId: string) => {
+    if (planId === 'free' || planId === 'team') {
+      // Free and Team not implemented yet
+      Alert.alert(
+        planId === 'free' ? 'Downgrade' : 'Team Plan',
+        planId === 'free' 
+          ? 'To downgrade, please cancel your subscription in the App Store.'
+          : 'Team plans coming soon! Contact support for early access.'
+      );
+      return;
+    }
+
+    if (planId === 'pro') {
+      await handlePurchasePro();
+    }
+  };
+
+  const handlePurchasePro = async () => {
+    const selectedPackage = billingPeriod === 'monthly' ? monthlyPackage : annualPackage;
+    
+    if (!selectedPackage) {
+      Alert.alert('Error', 'Subscription package not available. Please try again.');
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // In a real app, this would open payment flow
+    setIsPurchasing(true);
+
+    try {
+      await purchasePackage(selectedPackage);
+      
+      // Refresh profile to get updated plan
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        '🎉 Welcome to Pro!',
+        'Your subscription is now active. Enjoy unlimited trips, AI concierge, and all premium features!',
+        [{ text: 'Awesome!', onPress: () => router.back() }]
+      );
+    } catch (error: any) {
+      if (!error.userCancelled) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Purchase Failed', error.message || 'Something went wrong. Please try again.');
+      }
+    } finally {
+      setIsPurchasing(false);
+    }
+  };
+
+  const handleRestorePurchases = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsLoading(true);
+
+    try {
+      await restorePurchases();
+      
+      // Refresh profile
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('✅ Purchases Restored', 'Your subscription has been restored successfully!');
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Restore Failed', error.message || 'No purchases found to restore.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Update plan prices from RevenueCat
+  const getProPrice = () => {
+    if (billingPeriod === 'monthly' && monthlyPackage) {
+      return monthlyPackage.product.priceString;
+    }
+    if (billingPeriod === 'annual' && annualPackage) {
+      return annualPackage.product.priceString;
+    }
+    return billingPeriod === 'monthly' ? '$11.99' : '$99.99';
+  };
+
+  const getProPeriod = () => {
+    return billingPeriod === 'monthly' ? '/month' : '/year';
   };
 
   return (
@@ -208,6 +359,17 @@ export default function SubscriptionScreen() {
           <Text className="text-white text-xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
             Subscription
           </Text>
+          <Pressable
+            onPress={handleRestorePurchases}
+            disabled={isLoading}
+            className="ml-auto bg-slate-800/80 p-2.5 rounded-full border border-slate-700/50"
+          >
+            {isLoading ? (
+              <ActivityIndicator size="small" color="#94A3B8" />
+            ) : (
+              <RefreshCw size={20} color="#94A3B8" />
+            )}
+          </Pressable>
         </View>
 
         <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
@@ -233,8 +395,77 @@ export default function SubscriptionScreen() {
             </LinearGradient>
           </Animated.View>
 
+          {/* Billing Toggle for Pro */}
+          {currentPlanId === 'free' && (
+            <Animated.View entering={FadeInDown.duration(500).delay(100)} className="mb-6">
+              <View className="bg-slate-800/50 rounded-xl p-1 flex-row border border-slate-700/50">
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setBillingPeriod('monthly');
+                  }}
+                  className={`flex-1 py-3 rounded-lg ${
+                    billingPeriod === 'monthly' ? 'bg-slate-700' : ''
+                  }`}
+                >
+                  <Text
+                    className={`text-center font-semibold ${
+                      billingPeriod === 'monthly' ? 'text-white' : 'text-slate-400'
+                    }`}
+                    style={{ fontFamily: 'DMSans_700Bold' }}
+                  >
+                    Monthly
+                  </Text>
+                  <Text
+                    className={`text-center text-sm mt-0.5 ${
+                      billingPeriod === 'monthly' ? 'text-slate-300' : 'text-slate-500'
+                    }`}
+                    style={{ fontFamily: 'DMSans_400Regular' }}
+                  >
+                    $11.99/mo
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setBillingPeriod('annual');
+                  }}
+                  className={`flex-1 py-3 rounded-lg ${
+                    billingPeriod === 'annual' ? 'bg-purple-500' : ''
+                  }`}
+                >
+                  <View className="flex-row items-center justify-center mb-0.5">
+                    <Text
+                      className={`text-center font-semibold ${
+                        billingPeriod === 'annual' ? 'text-white' : 'text-slate-400'
+                      }`}
+                      style={{ fontFamily: 'DMSans_700Bold' }}
+                    >
+                      Annual
+                    </Text>
+                    {billingPeriod === 'annual' && (
+                      <View className="bg-emerald-500 px-1.5 py-0.5 rounded ml-1.5">
+                        <Text className="text-white text-xs font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                          SAVE 30%
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text
+                    className={`text-center text-sm ${
+                      billingPeriod === 'annual' ? 'text-white/80' : 'text-slate-500'
+                    }`}
+                    style={{ fontFamily: 'DMSans_400Regular' }}
+                  >
+                    $99.99/yr
+                  </Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+          )}
+
           {/* Plans */}
-          <Animated.View entering={FadeInDown.duration(500).delay(100)}>
+          <Animated.View entering={FadeInDown.duration(500).delay(150)}>
             <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
               Available Plans
             </Text>
@@ -244,9 +475,23 @@ export default function SubscriptionScreen() {
                 plan={plan}
                 isCurrentPlan={plan.id === currentPlanId}
                 onSelect={() => handleSelectPlan(plan.id)}
+                isPurchasing={isPurchasing}
+                displayPrice={plan.id === 'pro' ? getProPrice() : undefined}
+                displayPeriod={plan.id === 'pro' ? getProPeriod() : undefined}
               />
             ))}
           </Animated.View>
+
+          {/* Annual Savings Note */}
+          {billingPeriod === 'annual' && currentPlanId === 'free' && (
+            <Animated.View entering={FadeInDown.duration(500).delay(200)} className="mt-4">
+              <View className="bg-emerald-500/10 rounded-xl p-4 border border-emerald-500/20">
+                <Text className="text-emerald-400 text-sm text-center" style={{ fontFamily: 'DMSans_500Medium' }}>
+                  💰 Save $44 per year with annual billing
+                </Text>
+              </View>
+            </Animated.View>
+          )}
 
           <View className="h-8" />
         </ScrollView>

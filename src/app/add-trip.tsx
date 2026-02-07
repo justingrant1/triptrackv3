@@ -8,6 +8,11 @@ import {
   Image,
   Modal,
   Platform,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -23,7 +28,10 @@ import {
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { useTripStore, Trip } from '@/lib/store';
+import { useCreateTrip } from '@/lib/hooks/useTrips';
+import { useAuthStore } from '@/lib/state/auth-store';
+import { useSubscription } from '@/lib/hooks/useSubscription';
+import { UpgradeModal } from '@/components/UpgradeModal';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 const COVER_IMAGES = [
@@ -47,13 +55,16 @@ const formatDisplayDate = (date: Date | null): string => {
 
 export default function AddTripScreen() {
   const router = useRouter();
-  const addTrip = useTripStore((s) => s.addTrip);
+  const createTrip = useCreateTrip();
+  const { user } = useAuthStore();
+  const { canCreateTrip } = useSubscription();
 
   const [tripName, setTripName] = React.useState('');
   const [destination, setDestination] = React.useState('');
   const [startDate, setStartDate] = React.useState<Date | null>(null);
   const [endDate, setEndDate] = React.useState<Date | null>(null);
   const [selectedCover, setSelectedCover] = React.useState(COVER_IMAGES[0]);
+  const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
 
   // Date picker state
   const [showStartPicker, setShowStartPicker] = React.useState(false);
@@ -61,6 +72,7 @@ export default function AddTripScreen() {
   const [tempDate, setTempDate] = React.useState(new Date());
 
   const isValid = tripName.trim() && destination.trim() && startDate && endDate;
+  const isSaving = createTrip.isPending;
 
   const handleStartDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
@@ -113,28 +125,38 @@ export default function AddTripScreen() {
     setShowEndPicker(true);
   };
 
-  const handleSave = () => {
-    if (!isValid || !startDate || !endDate) {
+  const handleSave = async () => {
+    if (!isValid || !startDate || !endDate || !user) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
+
+    // Check if user can create more trips
+    if (!canCreateTrip) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setShowUpgradeModal(true);
       return;
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const newTrip: Trip = {
-      id: `trip-${Date.now()}`,
-      name: tripName.trim(),
-      destination: destination.trim(),
-      startDate: startDate,
-      endDate: endDate,
-      coverImage: selectedCover,
-      status: 'upcoming',
-      reservations: [],
-      receipts: [],
-    };
+    try {
+      await createTrip.mutateAsync({
+        user_id: user.id,
+        name: tripName.trim(),
+        destination: destination.trim(),
+        start_date: startDate.toISOString(),
+        end_date: endDate.toISOString(),
+        cover_image: selectedCover,
+        status: 'upcoming',
+      });
 
-    addTrip(newTrip);
-    router.back();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      router.back();
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Failed to create trip');
+    }
   };
 
   // iOS Modal Date Picker
@@ -202,6 +224,12 @@ export default function AddTripScreen() {
       />
 
       <SafeAreaView className="flex-1" edges={['top']}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          className="flex-1"
+        >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View className="flex-1">
         {/* Header */}
         <View className="flex-row items-center justify-between px-5 py-4">
           <Pressable
@@ -221,10 +249,14 @@ export default function AddTripScreen() {
           </Text>
           <Pressable
             onPress={handleSave}
-            disabled={!isValid}
-            className={`p-2.5 rounded-full ${isValid ? 'bg-blue-500' : 'bg-slate-700'}`}
+            disabled={!isValid || isSaving}
+            className={`p-2.5 rounded-full ${isValid && !isSaving ? 'bg-blue-500' : 'bg-slate-700'}`}
           >
-            <Check size={22} color={isValid ? '#FFFFFF' : '#64748B'} />
+            {isSaving ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Check size={22} color={isValid ? '#FFFFFF' : '#64748B'} />
+            )}
           </Pressable>
         </View>
 
@@ -393,6 +425,9 @@ export default function AddTripScreen() {
             </Animated.View>
           </View>
         </ScrollView>
+          </View>
+        </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
       {/* iOS Date Pickers */}
@@ -434,6 +469,13 @@ export default function AddTripScreen() {
           minimumDate={startDate ?? new Date()}
         />
       )}
+
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        visible={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        reason="trips"
+      />
     </View>
   );
 }

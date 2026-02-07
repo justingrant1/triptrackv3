@@ -1,4 +1,6 @@
-import { ReservationType } from './store';
+import type { Reservation } from './types/database';
+
+type ReservationType = Reservation['type'];
 
 export const formatTime = (date: Date): string => {
   return date.toLocaleTimeString('en-US', {

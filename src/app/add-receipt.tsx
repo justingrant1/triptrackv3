@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, TextInput } from 'react-native';
+import { View, Text, ScrollView, Pressable, TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -16,9 +16,16 @@ import {
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { useTripStore, Trip } from '@/lib/store';
+import * as ImagePicker from 'expo-image-picker';
+import { useTrips } from '@/lib/hooks/useTrips';
+import { useCreateReceipt } from '@/lib/hooks/useReceipts';
+import { supabase } from '@/lib/supabase';
+import { extractReceiptData } from '@/lib/openai';
+import { useSubscription } from '@/lib/hooks/useSubscription';
+import { UpgradeModal, UpgradeReason } from '@/components/UpgradeModal';
+import type { Trip, Receipt } from '@/lib/types/database';
 
-type Category = 'transport' | 'lodging' | 'meals' | 'other';
+type Category = Receipt['category'];
 
 const categories: { id: Category; label: string; icon: React.ReactNode; color: string }[] = [
   { id: 'transport', label: 'Transport', icon: <Plane size={18} color="#3B82F6" />, color: '#3B82F6' },
@@ -29,27 +36,145 @@ const categories: { id: Category; label: string; icon: React.ReactNode; color: s
 
 export default function AddReceiptScreen() {
   const router = useRouter();
-  const trips = useTripStore((s) => s.trips);
-  const activeTrips = trips.filter(t => t.status === 'active' || t.status === 'upcoming');
+  
+  const { data: trips = [], isLoading } = useTrips();
+  const createReceipt = useCreateReceipt();
+  
+  const activeTrips = trips.filter((t: Trip) => t.status === 'active' || t.status === 'upcoming');
 
   const [merchant, setMerchant] = React.useState('');
   const [amount, setAmount] = React.useState('');
   const [selectedCategory, setSelectedCategory] = React.useState<Category>('transport');
-  const [selectedTrip, setSelectedTrip] = React.useState<Trip | null>(activeTrips[0] ?? null);
+  const [selectedTrip, setSelectedTrip] = React.useState<Trip | null>(null);
   const [showTripPicker, setShowTripPicker] = React.useState(false);
+  const [isScanning, setIsScanning] = React.useState(false);
+  const [imageUrl, setImageUrl] = React.useState<string | null>(null);
+  const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
+  const [upgradeReason, setUpgradeReason] = React.useState<UpgradeReason>('receipt-ocr');
 
-  const handleSave = () => {
-    if (!merchant.trim() || !amount.trim()) {
+  const { canScanReceipt, canCreateReceipt } = useSubscription();
+  const isSaving = createReceipt.isPending;
+  const isValid = merchant.trim() && amount.trim() && selectedTrip;
+
+  // Set default trip when trips load
+  React.useEffect(() => {
+    if (activeTrips.length > 0 && !selectedTrip) {
+      setSelectedTrip(activeTrips[0]);
+    }
+  }, [activeTrips.length]);
+
+  const handleSave = async () => {
+    if (!isValid || !selectedTrip) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    router.back();
+
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Invalid Amount', 'Please enter a valid amount');
+      return;
+    }
+
+    // Check receipt limit
+    if (!canCreateReceipt) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setUpgradeReason('receipt-limit');
+      setShowUpgradeModal(true);
+      return;
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      await createReceipt.mutateAsync({
+        trip_id: selectedTrip.id,
+        reservation_id: null,
+        merchant: merchant.trim(),
+        amount: parsedAmount,
+        currency: 'USD',
+        date: new Date().toISOString(),
+        category: selectedCategory,
+        image_url: imageUrl,
+        status: 'pending',
+        ocr_data: imageUrl ? { scanned: true } : null,
+      });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      router.back();
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Failed to create receipt');
+    }
   };
 
-  const handleScanReceipt = () => {
+  const handleScanReceipt = async () => {
+    // Check if user can scan receipts (Pro feature)
+    if (!canScanReceipt) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setUpgradeReason('receipt-ocr');
+      setShowUpgradeModal(true);
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // TODO: Implement camera scan
+
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Camera permission is needed to scan receipts.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: 'images',
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      await processReceiptImage(result.assets[0].uri);
+    }
+  };
+
+  const processReceiptImage = async (uri: string) => {
+    setIsScanning(true);
+
+    try {
+      const fileName = `receipt-${Date.now()}.jpg`;
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('receipts')
+        .upload(fileName, blob, {
+          contentType: 'image/jpeg',
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('receipts')
+        .getPublicUrl(fileName);
+
+      setImageUrl(publicUrl);
+
+      const receiptData = await extractReceiptData(publicUrl);
+
+      setMerchant(receiptData.merchant);
+      setAmount(receiptData.amount.toString());
+      if (receiptData.category) {
+        setSelectedCategory(receiptData.category);
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Receipt Scanned! ✨', 'Details extracted. Please review and adjust if needed.');
+    } catch (error: any) {
+      console.error('Receipt scan error:', error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Scan Failed', error.message || 'Failed to scan receipt.');
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   return (
@@ -60,6 +185,12 @@ export default function AddReceiptScreen() {
       />
 
       <SafeAreaView className="flex-1" edges={['top', 'bottom']}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          className="flex-1"
+        >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View className="flex-1">
         {/* Header */}
         <View className="flex-row items-center justify-between px-5 py-4">
           <Pressable
@@ -76,19 +207,23 @@ export default function AddReceiptScreen() {
           </Text>
           <Pressable
             onPress={handleSave}
-            disabled={!merchant.trim() || !amount.trim()}
+            disabled={!isValid || isSaving}
             className={`px-4 py-2 rounded-full ${
-              merchant.trim() && amount.trim() ? 'bg-blue-500' : 'bg-slate-700'
+              isValid && !isSaving ? 'bg-blue-500' : 'bg-slate-700'
             }`}
           >
-            <Text
-              className={`font-semibold ${
-                merchant.trim() && amount.trim() ? 'text-white' : 'text-slate-500'
-              }`}
-              style={{ fontFamily: 'DMSans_700Bold' }}
-            >
-              Save
-            </Text>
+            {isSaving ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text
+                className={`font-semibold ${
+                  isValid ? 'text-white' : 'text-slate-500'
+                }`}
+                style={{ fontFamily: 'DMSans_700Bold' }}
+              >
+                Save
+              </Text>
+            )}
           </Pressable>
         </View>
 
@@ -97,17 +232,21 @@ export default function AddReceiptScreen() {
           <Animated.View entering={FadeInDown.duration(500)}>
             <Pressable
               onPress={handleScanReceipt}
+              disabled={isScanning}
               className="bg-blue-500/10 rounded-2xl p-6 items-center border border-blue-500/30 mb-6"
             >
               <View className="bg-blue-500/20 p-4 rounded-full mb-3">
                 <Camera size={28} color="#3B82F6" />
               </View>
               <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                Scan Receipt
+                {isScanning ? 'Scanning...' : 'Scan Receipt'}
               </Text>
               <Text className="text-slate-400 text-sm mt-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-                Use camera to auto-fill details
+                {isScanning ? 'AI is extracting details ✨' : 'Use camera to auto-fill details'}
               </Text>
+              {isScanning && (
+                <ActivityIndicator size="small" color="#3B82F6" style={{ marginTop: 8 }} />
+              )}
             </Pressable>
           </Animated.View>
 
@@ -241,7 +380,17 @@ export default function AddReceiptScreen() {
 
           <View className="h-8" />
         </ScrollView>
+          </View>
+        </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        visible={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        reason={upgradeReason}
+      />
     </View>
   );
 }

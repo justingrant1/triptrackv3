@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Share, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, Alert, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -17,14 +17,29 @@ import {
   ChevronRight,
   Camera,
   FileText,
+  Edit3,
+  Trash2,
+  Search,
+  X,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
   FadeInRight,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  runOnJS,
 } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
-import { useTripStore, Receipt, Trip } from '@/lib/store';
+import { useTrips } from '@/lib/hooks/useTrips';
+import { useAllReceipts, useDeleteReceipt } from '@/lib/hooks/useReceipts';
+import { useSubscription } from '@/lib/hooks/useSubscription';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import type { Receipt, Trip } from '@/lib/types/database';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { exportReceiptsAsCSV, exportReceiptsAsText } from '@/lib/export';
 
 const getCategoryIcon = (category: Receipt['category'], size: number = 18, color: string = '#FFFFFF') => {
   const icons: Record<Receipt['category'], React.ReactNode> = {
@@ -84,128 +99,268 @@ function SummaryCard({ title, amount, subtitle, color, icon }: {
 
 function ReceiptItem({ receipt, trip, index }: { receipt: Receipt; trip: Trip; index: number }) {
   const router = useRouter();
+  const deleteReceipt = useDeleteReceipt();
+  const [expanded, setExpanded] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+  const translateX = useSharedValue(0);
   const categoryColor = getCategoryColor(receipt.category);
   const statusInfo = getStatusInfo(receipt.status);
 
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const actionButtonsStyle = useAnimatedStyle(() => ({
+    opacity: translateX.value < -20 ? 1 : 0,
+  }));
+
   const handlePress = () => {
+    if (translateX.value < -10) {
+      translateX.value = withSpring(0);
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setExpanded(!expanded);
+  };
+
+  const handleEdit = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    translateX.value = withSpring(0);
+    setExpanded(false);
+    router.push(`/edit-receipt?id=${receipt.id}`);
+  };
+
+  const handleDelete = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    translateX.value = withSpring(0);
+    
+    Alert.alert(
+      'Delete Receipt',
+      `Are you sure you want to delete the receipt from "${receipt.merchant}"?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsDeleting(true);
+              await deleteReceipt.mutateAsync({ id: receipt.id, tripId: trip.id });
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (error: any) {
+              setIsDeleting(false);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('Error', error.message || 'Failed to delete receipt');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleViewTrip = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push(`/trip/${trip.id}`);
   };
 
-  return (
-    <Animated.View entering={FadeInRight.duration(400).delay(index * 60)}>
-      <Pressable
-        onPress={handlePress}
-        className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50 mb-3"
+  const panGesture = Gesture.Pan()
+    .activeOffsetX([-10, 10])
+    .onUpdate((event) => {
+      if (event.translationX < 0) {
+        translateX.value = Math.max(event.translationX, -140);
+      }
+    })
+    .onEnd(() => {
+      if (translateX.value < -70) {
+        translateX.value = withSpring(-140);
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+      } else {
+        translateX.value = withSpring(0);
+      }
+    });
+
+  if (isDeleting) {
+    return (
+      <Animated.View 
+        exiting={FadeOut.duration(300)}
+        className="bg-slate-800/50 rounded-2xl border border-slate-700/50 mb-3 p-4 items-center justify-center"
+        style={{ height: 86 }}
       >
-        <View style={{ backgroundColor: categoryColor + '20', padding: 10, borderRadius: 12 }}>
-          {getCategoryIcon(receipt.category, 20, categoryColor)}
-        </View>
-        <View className="flex-1 ml-3">
-          <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-            {receipt.merchant}
-          </Text>
-          <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {trip.name}
-          </Text>
-          <View className="flex-row items-center mt-1">
-            {statusInfo.icon}
-            <Text
-              className="text-xs ml-1"
-              style={{ color: statusInfo.color, fontFamily: 'DMSans_500Medium' }}
-            >
-              {statusInfo.label}
+        <ActivityIndicator size="small" color="#EF4444" />
+      </Animated.View>
+    );
+  }
+
+  return (
+    <Animated.View entering={FadeInRight.duration(400).delay(index * 60)} className="mb-3">
+      {/* Action Buttons Background */}
+      <Animated.View 
+        style={[actionButtonsStyle]}
+        className="absolute right-0 top-0 bottom-0 flex-row items-center gap-2 pr-5"
+      >
+        <Pressable
+          onPress={handleEdit}
+          className="bg-blue-500 w-12 h-12 rounded-xl items-center justify-center"
+        >
+          <Edit3 size={18} color="#FFFFFF" />
+        </Pressable>
+        <Pressable
+          onPress={handleDelete}
+          className="bg-red-500 w-12 h-12 rounded-xl items-center justify-center"
+        >
+          <Trash2 size={18} color="#FFFFFF" />
+        </Pressable>
+      </Animated.View>
+
+      {/* Swipeable Card */}
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={animatedStyle}>
+          <Pressable
+            onPress={handlePress}
+            className="bg-slate-800/50 rounded-2xl border border-slate-700/50 overflow-hidden"
+          >
+        <View className="p-4 flex-row items-center">
+          <View style={{ backgroundColor: categoryColor + '20', padding: 10, borderRadius: 12 }}>
+            {getCategoryIcon(receipt.category, 20, categoryColor)}
+          </View>
+          <View className="flex-1 ml-3">
+            <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+              {receipt.merchant}
+            </Text>
+            <Pressable onPress={handleViewTrip}>
+              <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                {trip.name}
+              </Text>
+            </Pressable>
+            <View className="flex-row items-center mt-1">
+              {statusInfo.icon}
+              <Text
+                className="text-xs ml-1"
+                style={{ color: statusInfo.color, fontFamily: 'DMSans_500Medium' }}
+              >
+                {statusInfo.label}
+              </Text>
+            </View>
+          </View>
+          <View className="items-end">
+            <Text className="text-white font-bold" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+              {formatCurrency(receipt.amount, receipt.currency)}
+            </Text>
+            <Text className="text-slate-500 text-xs mt-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+              {formatDate(new Date(receipt.date))}
             </Text>
           </View>
         </View>
-        <View className="items-end">
-          <Text className="text-white font-bold" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-            {formatCurrency(receipt.amount, receipt.currency)}
-          </Text>
-          <Text className="text-slate-500 text-xs mt-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {formatDate(receipt.date)}
-          </Text>
-        </View>
-      </Pressable>
+
+          </Pressable>
+        </Animated.View>
+      </GestureDetector>
     </Animated.View>
   );
 }
 
-function TripReceiptsGroup({ trip, index }: { trip: Trip; index: number }) {
-  const totalAmount = trip.receipts.reduce((sum, r) => sum + r.amount, 0);
-
-  if (trip.receipts.length === 0) return null;
-
-  return (
-    <Animated.View
-      entering={FadeInDown.duration(500).delay(index * 100)}
-      className="mb-6"
-    >
-      <View className="flex-row items-center justify-between mb-3">
-        <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-          {trip.name}
-        </Text>
-        <Text className="text-slate-400 text-sm" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-          {formatCurrency(totalAmount)}
-        </Text>
-      </View>
-      {trip.receipts.map((receipt, receiptIndex) => (
-        <ReceiptItem
-          key={receipt.id}
-          receipt={receipt}
-          trip={trip}
-          index={index * 10 + receiptIndex}
-        />
-      ))}
-    </Animated.View>
-  );
-}
 
 export default function ReceiptsScreen() {
   const router = useRouter();
-  const trips = useTripStore((s) => s.trips);
-  const getMissingReceipts = useTripStore((s) => s.getMissingReceipts);
+  
+  const { data: trips = [], isLoading: tripsLoading, refetch: refetchTrips } = useTrips();
+  const { data: allReceipts = [], isLoading: receiptsLoading, refetch: refetchReceipts } = useAllReceipts();
+  
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [showSearch, setShowSearch] = React.useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
 
-  const allReceipts = trips.flatMap((trip) =>
-    trip.receipts.map((r) => ({ ...r, tripName: trip.name }))
+  const { canExportCSV } = useSubscription();
+  const isLoading = tripsLoading || receiptsLoading;
+
+  // Filter receipts based on search query
+  const filteredReceipts = React.useMemo(() => {
+    if (!searchQuery.trim()) return allReceipts;
+    
+    const query = searchQuery.toLowerCase();
+    return allReceipts.filter(receipt => {
+      const trip = trips.find((t: Trip) => t.id === receipt.trip_id);
+      return (
+        receipt.merchant.toLowerCase().includes(query) ||
+        trip?.name.toLowerCase().includes(query) ||
+        trip?.destination.toLowerCase().includes(query)
+      );
+    });
+  }, [allReceipts, trips, searchQuery]);
+
+  // Calculate totals from filtered receipts
+  const totalExpenses = filteredReceipts.reduce((sum: number, r: Receipt) => sum + r.amount, 0);
+  const pendingCount = filteredReceipts.filter((r: Receipt) => r.status === 'pending').length;
+  const approvedAmount = filteredReceipts
+    .filter((r: Receipt) => r.status === 'approved')
+    .reduce((sum: number, r: Receipt) => sum + r.amount, 0);
+
+  // Group receipts by trip
+  const receiptsWithTrips = filteredReceipts.map((receipt: Receipt) => {
+    const trip = trips.find((t: Trip) => t.id === receipt.trip_id);
+    return { receipt, trip };
+  }).filter(item => item.trip);
+
+  const tripsWithReceipts = trips.filter((t: Trip) => 
+    allReceipts.some((r: Receipt) => r.trip_id === t.id)
   );
 
-  const totalExpenses = allReceipts.reduce((sum, r) => sum + r.amount, 0);
-  const pendingCount = allReceipts.filter((r) => r.status === 'pending').length;
-  const approvedAmount = allReceipts
-    .filter((r) => r.status === 'approved')
-    .reduce((sum, r) => sum + r.amount, 0);
-
-  const tripsWithReceipts = trips.filter((t) => t.receipts.length > 0);
-  const missingReceipts = getMissingReceipts();
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([refetchTrips(), refetchReceipts()]);
+    setRefreshing(false);
+  };
 
   const handleExport = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    // Generate expense report text
-    let report = 'TripTrack Expense Report\n';
-    report += '========================\n\n';
-    report += `Total Expenses: ${formatCurrency(totalExpenses)}\n`;
-    report += `Approved: ${formatCurrency(approvedAmount)}\n`;
-    report += `Pending: ${pendingCount} receipts\n\n`;
-
-    tripsWithReceipts.forEach((trip) => {
-      const tripTotal = trip.receipts.reduce((sum, r) => sum + r.amount, 0);
-      report += `${trip.name} - ${formatCurrency(tripTotal)}\n`;
-      trip.receipts.forEach((r) => {
-        report += `  - ${r.merchant}: ${formatCurrency(r.amount, r.currency)} (${r.status})\n`;
-      });
-      report += '\n';
-    });
-
-    try {
-      await Share.share({
-        message: report,
-        title: 'TripTrack Expense Report',
-      });
-    } catch (error) {
-      // User cancelled
+    // Check if user can export CSV (Pro feature)
+    if (!canExportCSV) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setShowUpgradeModal(true);
+      return;
     }
+
+    // Show export options
+    Alert.alert(
+      'Export Receipts',
+      'Choose export format',
+      [
+        {
+          text: 'CSV (Spreadsheet)',
+          onPress: async () => {
+            try {
+              await exportReceiptsAsCSV(filteredReceipts);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (error: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('Export Failed', error.message || 'Failed to export receipts');
+            }
+          },
+        },
+        {
+          text: 'Text Report',
+          onPress: async () => {
+            try {
+              await exportReceiptsAsText(filteredReceipts);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (error: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('Export Failed', error.message || 'Failed to export receipts');
+            }
+          },
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
   };
 
   const handleAddReceipt = () => {
@@ -226,14 +381,24 @@ export default function ReceiptsScreen() {
       />
 
       <SafeAreaView className="flex-1" edges={['top']}>
-        <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          className="flex-1" 
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#3b82f6"
+            />
+          }
+        >
           {/* Header */}
           <Animated.View
             entering={FadeInDown.duration(500)}
-            className="px-5 pt-4 pb-6"
+            className="px-5 pt-4 pb-4"
           >
-            <View className="flex-row items-center justify-between">
-              <View>
+            <View className="flex-row items-center justify-between mb-4">
+              <View className="flex-1">
                 <Text className="text-white text-2xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
                   Receipts
                 </Text>
@@ -241,10 +406,24 @@ export default function ReceiptsScreen() {
                   Track and export expenses
                 </Text>
               </View>
-              <View className="flex-row">
+              <View className="flex-row gap-2">
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowSearch(!showSearch);
+                    if (showSearch) setSearchQuery('');
+                  }}
+                  className="bg-slate-800/80 p-3 rounded-full border border-slate-700/50"
+                >
+                  {showSearch ? (
+                    <X size={20} color="#94A3B8" />
+                  ) : (
+                    <Search size={20} color="#94A3B8" />
+                  )}
+                </Pressable>
                 <Pressable
                   onPress={handleExport}
-                  className="bg-slate-800/80 p-3 rounded-full border border-slate-700/50 mr-2"
+                  className="bg-slate-800/80 p-3 rounded-full border border-slate-700/50"
                 >
                   <Download size={20} color="#94A3B8" />
                 </Pressable>
@@ -256,6 +435,32 @@ export default function ReceiptsScreen() {
                 </Pressable>
               </View>
             </View>
+
+            {/* Search Bar */}
+            {showSearch && (
+              <Animated.View entering={FadeInDown.duration(300)}>
+                <View className="bg-slate-800/80 rounded-xl px-4 py-3 flex-row items-center border border-slate-700/50">
+                  <Search size={18} color="#64748B" />
+                  <TextInput
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Search receipts..."
+                    placeholderTextColor="#64748B"
+                    className="flex-1 text-white ml-2"
+                    style={{ fontFamily: 'DMSans_400Regular', fontSize: 16 }}
+                    autoFocus
+                  />
+                  {searchQuery.length > 0 && (
+                    <Pressable
+                      onPress={() => setSearchQuery('')}
+                      className="p-1"
+                    >
+                      <X size={16} color="#64748B" />
+                    </Pressable>
+                  )}
+                </View>
+              </Animated.View>
+            )}
           </Animated.View>
 
           {/* Summary Cards */}
@@ -279,32 +484,6 @@ export default function ReceiptsScreen() {
               icon={<CheckCircle size={18} color="#10B981" />}
             />
           </Animated.View>
-
-          {/* Missing Receipts Alert */}
-          {missingReceipts.length > 0 && (
-            <Animated.View
-              entering={FadeInDown.duration(500).delay(150)}
-              className="px-5 mb-4"
-            >
-              <Pressable
-                onPress={handleAddReceipt}
-                className="bg-amber-500/10 rounded-2xl p-4 flex-row items-center border border-amber-500/20"
-              >
-                <View className="bg-amber-500/20 p-2.5 rounded-xl">
-                  <AlertCircle size={20} color="#F59E0B" />
-                </View>
-                <View className="flex-1 ml-3">
-                  <Text className="text-amber-400 font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    {missingReceipts.length} missing receipt{missingReceipts.length > 1 ? 's' : ''}
-                  </Text>
-                  <Text className="text-amber-400/70 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
-                    Add receipts for completed bookings
-                  </Text>
-                </View>
-                <ChevronRight size={18} color="#F59E0B" />
-              </Pressable>
-            </Animated.View>
-          )}
 
           {/* Quick Actions */}
           <Animated.View
@@ -330,12 +509,19 @@ export default function ReceiptsScreen() {
             </Pressable>
           </Animated.View>
 
-          {/* Receipts by Trip */}
-          {tripsWithReceipts.length > 0 ? (
+          {/* Receipts List */}
+          {receiptsWithTrips.length > 0 ? (
             <View className="px-5 pb-4">
-              {tripsWithReceipts.map((trip, index) => (
-                <TripReceiptsGroup key={trip.id} trip={trip} index={index} />
-              ))}
+              {receiptsWithTrips.map(({ receipt, trip }, index) => 
+                trip ? (
+                  <ReceiptItem
+                    key={receipt.id}
+                    receipt={receipt}
+                    trip={trip}
+                    index={index}
+                  />
+                ) : null
+              )}
 
               {/* Export CTA */}
               <Animated.View
@@ -359,29 +545,41 @@ export default function ReceiptsScreen() {
               className="mx-5 bg-slate-800/30 rounded-3xl p-8 items-center border border-slate-700/30"
             >
               <View className="bg-slate-700/30 p-4 rounded-full mb-4">
-                <ReceiptIcon size={32} color="#64748B" />
+                {searchQuery ? <Search size={32} color="#64748B" /> : <ReceiptIcon size={32} color="#64748B" />}
               </View>
               <Text className="text-slate-300 text-lg font-semibold text-center" style={{ fontFamily: 'DMSans_700Bold' }}>
-                No receipts yet
+                {searchQuery ? 'No receipts found' : 'No receipts yet'}
               </Text>
               <Text className="text-slate-500 text-sm text-center mt-2 px-4" style={{ fontFamily: 'DMSans_400Regular' }}>
-                Add receipts from your trips or scan new ones
+                {searchQuery 
+                  ? `No receipts match "${searchQuery}"`
+                  : 'Add receipts from your trips or scan new ones'
+                }
               </Text>
-              <Pressable
-                onPress={handleAddReceipt}
-                className="mt-4 bg-blue-500 px-5 py-2.5 rounded-full flex-row items-center"
-              >
-                <Plus size={16} color="#FFFFFF" />
-                <Text className="text-white font-semibold ml-2" style={{ fontFamily: 'DMSans_700Bold' }}>
-                  Add Receipt
-                </Text>
-              </Pressable>
+              {!searchQuery && (
+                <Pressable
+                  onPress={handleAddReceipt}
+                  className="mt-4 bg-blue-500 px-5 py-2.5 rounded-full flex-row items-center"
+                >
+                  <Plus size={16} color="#FFFFFF" />
+                  <Text className="text-white font-semibold ml-2" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    Add Receipt
+                  </Text>
+                </Pressable>
+              )}
             </Animated.View>
           )}
 
           <View className="h-8" />
         </ScrollView>
       </SafeAreaView>
+
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        visible={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        reason="csv-export"
+      />
     </View>
   );
 }

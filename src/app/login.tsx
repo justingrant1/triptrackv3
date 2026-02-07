@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
+import { useState, useCallback, useEffect } from 'react';
+import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -17,6 +17,7 @@ import Animated, {
 import { Mail, Lock, ArrowRight, Eye, EyeOff } from 'lucide-react-native';
 import Svg, { Path } from 'react-native-svg';
 import { cn } from '@/lib/cn';
+import { useAuthStore } from '@/lib/state/auth-store';
 
 // Apple Logo component
 function AppleLogo() {
@@ -36,10 +37,18 @@ export default function LoginScreen() {
   const [isEmailFocused, setIsEmailFocused] = useState(false);
   const [isPasswordFocused, setIsPasswordFocused] = useState(false);
 
+  // Auth store
+  const { login, register, isLoading, error, clearError } = useAuthStore();
+
   // Animation values
   const buttonScale = useSharedValue(1);
   const appleButtonScale = useSharedValue(1);
   const toggleLeft = useSharedValue(4);
+
+  // Clear error when switching between login/signup
+  useEffect(() => {
+    clearError();
+  }, [isLogin, clearError]);
 
   const handleEmailFocus = useCallback((focused: boolean) => {
     setIsEmailFocused(focused);
@@ -59,15 +68,57 @@ export default function LoginScreen() {
     toggleLeft.value = withSpring(toLogin ? 4 : toggleWidth + 4, { damping: 15, stiffness: 150 });
   }, [isLogin, toggleLeft, width]);
 
-  const handleContinue = useCallback(() => {
+  const handleContinue = useCallback(async () => {
+    // Validate inputs
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Error', 'Please enter both email and password');
+      return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    // Validate password length
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     buttonScale.value = withSequence(
       withTiming(0.95, { duration: 100 }),
       withSpring(1, { damping: 10 })
     );
-    // Navigate to main app
-    router.replace('/(tabs)');
-  }, [buttonScale]);
+
+    try {
+      let result;
+      if (isLogin) {
+        result = await login(email.trim(), password);
+      } else {
+        result = await register(email.trim(), password);
+      }
+
+      if (result.success) {
+        // Check if it's a signup that requires email confirmation
+        if (result.error) {
+          Alert.alert('Success', result.error);
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          router.replace('/(tabs)');
+        }
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Error', result.error || 'Authentication failed');
+      }
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'An unexpected error occurred');
+    }
+  }, [email, password, isLogin, login, register, buttonScale]);
 
   const handleAppleSignIn = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -294,9 +345,9 @@ export default function LoginScreen() {
 
               {/* Continue Button */}
               <Animated.View style={buttonAnimatedStyle}>
-                <Pressable onPress={handleContinue}>
+                <Pressable onPress={handleContinue} disabled={isLoading}>
                   <LinearGradient
-                    colors={['#3b82f6', '#2563eb', '#1d4ed8']}
+                    colors={isLoading ? ['#6b7280', '#4b5563', '#374151'] : ['#3b82f6', '#2563eb', '#1d4ed8']}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={{
@@ -307,10 +358,16 @@ export default function LoginScreen() {
                       justifyContent: 'center',
                     }}
                   >
-                    <Text className="text-white text-base font-semibold mr-2">
-                      {isLogin ? 'Sign In' : 'Create Account'}
-                    </Text>
-                    <ArrowRight size={20} color="white" />
+                    {isLoading ? (
+                      <ActivityIndicator color="white" />
+                    ) : (
+                      <>
+                        <Text className="text-white text-base font-semibold mr-2">
+                          {isLogin ? 'Sign In' : 'Create Account'}
+                        </Text>
+                        <ArrowRight size={20} color="white" />
+                      </>
+                    )}
                   </LinearGradient>
                 </Pressable>
               </Animated.View>

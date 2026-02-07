@@ -1,0 +1,4 @@
+project_id = "jucngvlcnxjyvjxydmco"
+
+[functions.parse-travel-email]
+verify_jwt = false

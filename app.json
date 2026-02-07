@@ -1,23 +1,45 @@
 {
   "expo": {
-    "name": "vibecode",
-    "slug": "vibecode",
-    "scheme": "vibecode",
+    "name": "TripTrack",
+    "slug": "triptrack",
+    "scheme": "triptrack",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./src/assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.triptrack.app",
-      "buildNumber": "1"
+      "buildNumber": "1",
+      "icon": "./src/assets/icon.png",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCalendarsUsageDescription": "TripTrack needs access to your calendar to help you organize and manage your trip schedules and reservations.",
+        "NSContactsUsageDescription": "TripTrack needs access to your contacts to help you share trip details with your travel companions.",
+        "NSCameraUsageDescription": "TripTrack needs access to your camera to capture and save receipts and travel documents.",
+        "NSLocationWhenInUseUsageDescription": "TripTrack needs access to your location to provide location-based trip recommendations and track your travel routes.",
+        "NSPhotoLibraryUsageDescription": "TripTrack needs access to your photo library to save and organize your travel photos and receipts.",
+        "NSPhotoLibraryAddUsageDescription": "TripTrack needs permission to save photos and receipts to your photo library."
+      }
     },
     "android": {
       "edgeToEdgeEnabled": true
     },
-    "plugins": ["expo-router"],
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font"
+    ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "dee462d9-4e30-4695-9b80-85f8cceea468"
+      }
+    },
+    "owner": "jgrant1"
   }
 }

@@ -29,7 +29,9 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { useTripStore } from '@/lib/store';
+import { useAuthStore } from '@/lib/state/auth-store';
+import { useProfile } from '@/lib/hooks/useProfile';
+import { Alert, Image } from 'react-native';
 
 function MenuSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -98,40 +100,52 @@ function MenuItem({
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const user = useTripStore((s) => s.user);
+  const { user, logout } = useAuthStore();
+  const { data: profile } = useProfile();
   const [copied, setCopied] = React.useState(false);
   const copyScale = useSharedValue(1);
 
+  const handleSignOut = () => {
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            await logout();
+            router.replace('/login');
+          },
+        },
+      ]
+    );
+  };
+
+  const forwardingEmail = 'plans@triptrack.ai'; // All users forward to the same address
+  const userName = profile?.name || user?.email?.split('@')[0] || 'User';
+  const userInitial = userName.charAt(0).toUpperCase();
+  const userPlan = profile?.plan || 'free';
+
   const handleCopyEmail = async () => {
-    if (user?.forwardingEmail) {
-      await Clipboard.setStringAsync(user.forwardingEmail);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setCopied(true);
-      copyScale.value = withSequence(
-        withSpring(1.2),
-        withSpring(1)
-      );
-      setTimeout(() => setCopied(false), 2000);
-    }
+    await Clipboard.setStringAsync(forwardingEmail);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setCopied(true);
+    copyScale.value = withSequence(
+      withSpring(1.2),
+      withSpring(1)
+    );
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const copyAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: copyScale.value }],
   }));
-
-  const getPlanBadge = () => {
-    if (user?.plan === 'pro') {
-      return (
-        <View className="bg-purple-500/20 px-2 py-0.5 rounded-full flex-row items-center">
-          <Sparkles size={10} color="#A855F7" />
-          <Text className="text-purple-400 text-xs ml-1 font-medium" style={{ fontFamily: 'DMSans_500Medium' }}>
-            Pro
-          </Text>
-        </View>
-      );
-    }
-    return null;
-  };
 
   return (
     <View className="flex-1 bg-slate-950">
@@ -160,20 +174,27 @@ export default function ProfileScreen() {
             <Pressable onPress={() => router.push('/edit-profile')}>
               <View className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700/50">
                 <View className="flex-row items-center">
-                  <View className="w-16 h-16 rounded-full bg-blue-500 items-center justify-center">
-                    <Text className="text-white text-2xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                      {user?.name?.charAt(0) ?? 'A'}
-                    </Text>
-                  </View>
-                  <View className="flex-1 ml-4">
-                    <View className="flex-row items-center">
-                      <Text className="text-white text-lg font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                        {user?.name ?? 'Alex Chen'}
-                      </Text>
-                      <View className="ml-2">{getPlanBadge()}</View>
+                  {profile?.avatar_url ? (
+                    <View className="w-16 h-16 rounded-full overflow-hidden bg-slate-700">
+                      <Image
+                        source={{ uri: profile.avatar_url }}
+                        style={{ width: 64, height: 64 }}
+                        resizeMode="cover"
+                      />
                     </View>
+                  ) : (
+                    <View className="w-16 h-16 rounded-full bg-blue-500 items-center justify-center">
+                      <Text className="text-white text-2xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                        {userInitial}
+                      </Text>
+                    </View>
+                  )}
+                  <View className="flex-1 ml-4">
+                    <Text className="text-white text-lg font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                      {userName}
+                    </Text>
                     <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                      {user?.email ?? 'alex@startup.io'}
+                      {profile?.email || user?.email || 'user@example.com'}
                     </Text>
                   </View>
                   <ChevronRight size={20} color="#64748B" />
@@ -217,7 +238,7 @@ export default function ProfileScreen() {
                       Your forwarding address
                     </Text>
                     <Text className="text-white text-base mt-0.5" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-                      {user?.forwardingEmail ?? 'plans@triptrack.ai'}
+                      {forwardingEmail}
                     </Text>
                   </View>
                   <Animated.View style={copyAnimatedStyle}>
@@ -267,12 +288,20 @@ export default function ProfileScreen() {
             {/* Email & Connections */}
             <MenuSection title="Email & Connections">
               <MenuItem
+                icon={<Sparkles size={18} color="#8B5CF6" />}
+                iconColor="#8B5CF6"
+                label="Parse Email"
+                sublabel="Paste travel confirmation to add trip"
+                onPress={() => router.push('/parse-email')}
+                index={0}
+              />
+              <MenuItem
                 icon={<Link2 size={18} color="#10B981" />}
                 iconColor="#10B981"
                 label="Connect Gmail"
                 sublabel="Auto-scan travel emails"
                 onPress={() => router.push('/connected-accounts')}
-                index={0}
+                index={1}
                 badge={
                   <View className="bg-emerald-500/20 px-2 py-0.5 rounded-full ml-2">
                     <Text className="text-emerald-400 text-xs" style={{ fontFamily: 'DMSans_500Medium' }}>
@@ -287,7 +316,7 @@ export default function ProfileScreen() {
                 label="Trusted Emails"
                 sublabel="Manage allowed senders"
                 onPress={() => router.push('/trusted-emails')}
-                index={1}
+                index={2}
                 isLast
               />
             </MenuSection>
@@ -305,7 +334,7 @@ export default function ProfileScreen() {
                 icon={<CreditCard size={18} color="#8B5CF6" />}
                 iconColor="#8B5CF6"
                 label="Subscription"
-                sublabel="Pro Plan"
+                sublabel={userPlan === 'pro' ? 'Pro Plan' : userPlan === 'team' ? 'Team Plan' : 'Free Plan'}
                 onPress={() => router.push('/subscription')}
                 index={3}
               />
@@ -344,7 +373,7 @@ export default function ProfileScreen() {
                 icon={<LogOut size={18} color="#EF4444" />}
                 iconColor="#EF4444"
                 label="Sign Out"
-                onPress={() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)}
+                onPress={handleSignOut}
                 index={7}
                 isLast
                 trailing={null}

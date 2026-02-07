@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -33,9 +33,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
-import { useTripStore, Reservation, ReservationType } from '@/lib/store';
+import { useUpcomingTrips } from '@/lib/hooks/useTrips';
+import { useUpcomingReservations } from '@/lib/hooks/useReservations';
+import type { Reservation } from '@/lib/types/database';
 import { formatTime, formatDate, getCountdown, isToday, isTomorrow } from '@/lib/utils';
-import { getWeatherForDestination, getWeatherIcon } from '@/lib/weather';
+import { useAuthStore } from '@/lib/state/auth-store';
+import { getWeatherIcon } from '@/lib/weather';
+import { useWeather } from '@/lib/hooks/useWeather';
+
+type ReservationType = Reservation['type'];
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -66,7 +72,7 @@ const getTypeColor = (type: ReservationType): [string, string] => {
 function NextUpCard({ reservation }: { reservation: Reservation }) {
   const router = useRouter();
   const [primary, secondary] = getTypeColor(reservation.type);
-  const countdown = getCountdown(reservation.startTime);
+  const countdown = getCountdown(new Date(reservation.start_time));
 
   const pulseAnim = useSharedValue(1);
 
@@ -84,7 +90,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push(`/trip/${reservation.tripId}`);
+    router.push(`/trip/${reservation.trip_id}`);
   };
 
   // Get gate/seat info for flights
@@ -161,7 +167,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
             <View className="flex-row items-center bg-slate-800/50 rounded-xl p-3 mb-3">
               <Clock size={16} color="#94A3B8" />
               <Text className="text-white text-base ml-2 font-medium" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-                {formatTime(reservation.startTime)}
+                {formatTime(new Date(reservation.start_time))}
               </Text>
 
               {reservation.type === 'flight' && (gateInfo || seatInfo) && (
@@ -190,11 +196,11 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
               </View>
             )}
 
-            {reservation.alertMessage && (
+            {reservation.alert_message && (
               <View className="bg-amber-500/20 rounded-xl p-3 flex-row items-center mb-3">
                 <AlertCircle size={16} color="#F59E0B" />
                 <Text className="text-amber-400 text-sm ml-2 flex-1 font-medium" style={{ fontFamily: 'DMSans_500Medium' }}>
-                  {reservation.alertMessage}
+                  {reservation.alert_message}
                 </Text>
               </View>
             )}
@@ -218,7 +224,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push(`/trip/${reservation.tripId}`);
+    router.push(`/trip/${reservation.trip_id}`);
   };
 
   return (
@@ -244,10 +250,10 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
         </View>
         <View className="items-end">
           <Text className="text-white text-sm font-medium" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-            {formatTime(reservation.startTime)}
+            {formatTime(new Date(reservation.start_time))}
           </Text>
           <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {isToday(reservation.startTime) ? 'Today' : isTomorrow(reservation.startTime) ? 'Tomorrow' : formatDate(reservation.startTime)}
+            {isToday(new Date(reservation.start_time)) ? 'Today' : isTomorrow(new Date(reservation.start_time)) ? 'Tomorrow' : formatDate(new Date(reservation.start_time))}
           </Text>
         </View>
       </Pressable>
@@ -294,19 +300,30 @@ function QuickAction({ icon, label, color, onPress }: { icon: React.ReactNode; l
 
 export default function TodayScreen() {
   const router = useRouter();
-  const user = useTripStore((s) => s.user);
-  const getActiveTrip = useTripStore((s) => s.getActiveTrip);
-  const getTodayReservations = useTripStore((s) => s.getTodayReservations);
-  const getUpcomingReservations = useTripStore((s) => s.getUpcomingReservations);
+  const { user } = useAuthStore();
+  const [refreshing, setRefreshing] = React.useState(false);
+  
+  const { data: upcomingTrips = [], refetch: refetchTrips } = useUpcomingTrips();
+  const { data: upcomingReservations = [], refetch: refetchReservations } = useUpcomingReservations();
 
-  const activeTrip = getActiveTrip();
-  const todayReservations = getTodayReservations();
-  const upcoming48h = getUpcomingReservations(48);
-  const nextUp = todayReservations[0] ?? upcoming48h[0];
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([refetchTrips(), refetchReservations()]);
+    setRefreshing(false);
+  }, [refetchTrips, refetchReservations]);
+
+  const activeTrip = upcomingTrips.find(t => t.status === 'active');
+  const nextUp = upcomingReservations[0];
+  
+  // Separate today vs later
+  const todayReservations = upcomingReservations.filter(r => isToday(new Date(r.start_time)));
   const laterToday = todayReservations.slice(1);
+  
+  // Get upcoming reservations in next 48 hours (for "Coming Up" section)
+  const upcoming48h = upcomingReservations;
 
   // Get weather for active trip
-  const weather = activeTrip ? getWeatherForDestination(activeTrip.destination) : null;
+  const { data: weather } = useWeather(activeTrip?.destination);
 
   const handleNavigate = () => {
     if (nextUp?.address) {
@@ -341,7 +358,7 @@ export default function TodayScreen() {
       case 'flight':
         baseActions.push(
           { icon: <Navigation size={22} color="#3B82F6" />, label: 'To Airport', color: '#3B82F6', onPress: handleNavigate },
-          { icon: <CreditCard size={22} color="#8B5CF6" />, label: 'Boarding Pass', color: '#8B5CF6', onPress: () => router.push(`/trip/${nextUp.tripId}`) }
+          { icon: <CreditCard size={22} color="#8B5CF6" />, label: 'Boarding Pass', color: '#8B5CF6', onPress: () => router.push(`/trip/${nextUp.trip_id}`) }
         );
         break;
       case 'hotel':
@@ -353,7 +370,7 @@ export default function TodayScreen() {
       case 'car':
         baseActions.push(
           { icon: <Navigation size={22} color="#3B82F6" />, label: 'Navigate', color: '#3B82F6', onPress: handleNavigate },
-          { icon: <CreditCard size={22} color="#8B5CF6" />, label: 'Confirmation', color: '#8B5CF6', onPress: () => router.push(`/trip/${nextUp.tripId}`) }
+          { icon: <CreditCard size={22} color="#8B5CF6" />, label: 'Confirmation', color: '#8B5CF6', onPress: () => router.push(`/trip/${nextUp.trip_id}`) }
         );
         break;
       default:
@@ -380,7 +397,17 @@ export default function TodayScreen() {
       />
 
       <SafeAreaView className="flex-1" edges={['top']}>
-        <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          className="flex-1" 
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#3b82f6"
+            />
+          }
+        >
           {/* Compact Header */}
           <Animated.View
             entering={FadeInDown.duration(500)}
@@ -402,7 +429,7 @@ export default function TodayScreen() {
                   </Pressable>
                 ) : (
                   <Text className="text-white text-lg font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    {user?.name?.split(' ')[0] ?? 'TripTrack'}
+                    Today
                   </Text>
                 )}
               </View>

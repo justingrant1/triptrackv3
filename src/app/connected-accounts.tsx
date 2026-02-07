@@ -15,6 +15,8 @@ import {
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { useSubscription } from '@/lib/hooks/useSubscription';
+import { UpgradeModal } from '@/components/UpgradeModal';
 
 interface ConnectedAccount {
   id: string;
@@ -55,8 +57,17 @@ export default function ConnectedAccountsScreen() {
   ]);
 
   const [isConnecting, setIsConnecting] = React.useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
+  const { canConnectGmail } = useSubscription();
 
   const handleConnectGmail = () => {
+    // Check if user can connect Gmail (Pro feature)
+    if (!canConnectGmail) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setShowUpgradeModal(true);
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsConnecting(true);
     // Simulate OAuth flow
@@ -67,6 +78,13 @@ export default function ConnectedAccountsScreen() {
   };
 
   const handleConnectOutlook = () => {
+    // Check if user can connect Outlook (Pro feature)
+    if (!canConnectGmail) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setShowUpgradeModal(true);
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     // Would open Outlook OAuth
   };
@@ -292,6 +310,13 @@ export default function ConnectedAccountsScreen() {
           <View className="h-8" />
         </ScrollView>
       </SafeAreaView>
+
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        visible={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        reason="gmail-connect"
+      />
     </View>
   );
 }

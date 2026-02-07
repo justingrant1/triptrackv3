@@ -2,9 +2,6 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { View, Pressable } from 'react-native';
 import { Compass, Map, Receipt, User, Sparkles } from 'lucide-react-native';
-import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
-import { SpaceMono_400Regular, SpaceMono_700Bold } from '@expo-google-fonts/space-mono';
-import * as SplashScreen from 'expo-splash-screen';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -58,24 +55,6 @@ function AskAIButton() {
 }
 
 export default function TabLayout() {
-  const [fontsLoaded] = useFonts({
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_700Bold,
-    SpaceMono_400Regular,
-    SpaceMono_700Bold,
-  });
-
-  React.useEffect(() => {
-    if (fontsLoaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded]);
-
-  if (!fontsLoaded) {
-    return null;
-  }
-
   return (
     <Tabs
       screenOptions={{
@@ -98,20 +77,20 @@ export default function TabLayout() {
       }}
     >
       <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Today',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon icon={Compass} color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="trips"
         options={{
           title: 'Trips',
           tabBarIcon: ({ color, focused }) => (
             <TabBarIcon icon={Map} color={color} focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Today',
+          tabBarIcon: ({ color, focused }) => (
+            <TabBarIcon icon={Compass} color={color} focused={focused} />
           ),
         }}
       />

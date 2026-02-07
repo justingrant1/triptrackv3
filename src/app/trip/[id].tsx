@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Image, Dimensions, SectionList } from 'react-native';
+import { View, Text, ScrollView, Pressable, Image, Dimensions, SectionList, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -19,6 +19,8 @@ import {
   Share2,
   Sparkles,
   Plus,
+  Edit3,
+  MoreVertical,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -32,9 +34,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { useTripStore, Reservation, ReservationType } from '@/lib/store';
+import { useTrip, useDeleteTrip } from '@/lib/hooks/useTrips';
+import { useReservations, useDeleteReservation } from '@/lib/hooks/useReservations';
+import type { Reservation } from '@/lib/types/database';
 import { formatTime, formatDate, formatDateLong, isToday, isTomorrow, getLiveStatus, LiveStatus } from '@/lib/utils';
-import { getWeatherForDestination, getWeatherIcon } from '@/lib/weather';
+import { getWeatherIcon } from '@/lib/weather';
+import { useWeather } from '@/lib/hooks/useWeather';
+import { shareTripNative } from '@/lib/sharing';
+
+type ReservationType = Reservation['type'];
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HEADER_HEIGHT = 280;
@@ -100,20 +108,23 @@ function LiveStatusChip({ status }: { status: LiveStatus }) {
   );
 }
 
-function ReservationCard({ reservation, index, isFirst, isLast }: {
+function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
   reservation: Reservation;
   index: number;
   isFirst: boolean;
   isLast: boolean;
+  tripId: string;
 }) {
+  const router = useRouter();
   const [expanded, setExpanded] = React.useState(false);
+  const deleteReservation = useDeleteReservation();
   const typeColor = getTypeColor(reservation.type);
   const statusColor = getStatusColor(reservation.status);
-  const liveStatus = getLiveStatus(reservation.type, reservation.startTime, reservation.endTime, reservation.status);
+  const liveStatus = getLiveStatus(reservation.type, new Date(reservation.start_time), reservation.end_time ? new Date(reservation.end_time) : undefined, reservation.status);
 
   const handleCopyConfirmation = async () => {
-    if (reservation.confirmationNumber) {
-      await Clipboard.setStringAsync(reservation.confirmationNumber);
+    if (reservation.confirmation_number) {
+      await Clipboard.setStringAsync(reservation.confirmation_number);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
   };
@@ -121,6 +132,40 @@ function ReservationCard({ reservation, index, isFirst, isLast }: {
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setExpanded(!expanded);
+  };
+
+  const handleEdit = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push(`/edit-reservation?id=${reservation.id}`);
+  };
+
+  const handleDelete = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    Alert.alert(
+      'Delete Reservation',
+      `Are you sure you want to delete "${reservation.title}"?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteReservation.mutateAsync({ id: reservation.id, tripId });
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (error: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('Error', error.message || 'Failed to delete reservation');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Extract gate and seat for flights to show inline
@@ -150,6 +195,7 @@ function ReservationCard({ reservation, index, isFirst, isLast }: {
       {/* Card Content */}
       <AnimatedPressable
         onPress={handlePress}
+        onLongPress={handleDelete}
         className="flex-1 mb-4"
       >
         <View className="bg-slate-800/60 rounded-2xl border border-slate-700/50 overflow-hidden">
@@ -163,26 +209,56 @@ function ReservationCard({ reservation, index, isFirst, isLast }: {
               </View>
               <View className="flex-1 ml-3">
                 <View className="flex-row items-center justify-between">
-                  <Text className="text-white font-bold text-base" style={{ fontFamily: 'DMSans_700Bold' }}>
+                  <Text className="text-white font-bold text-base flex-1" style={{ fontFamily: 'DMSans_700Bold' }}>
                     {reservation.title}
                   </Text>
-                  {liveStatus ? (
-                    <LiveStatusChip status={liveStatus} />
-                  ) : (
-                    <View
-                      className="px-2 py-0.5 rounded-full flex-row items-center"
-                      style={{ backgroundColor: statusColor + '20' }}
-                    >
-                      {reservation.status === 'confirmed' && <CheckCircle size={10} color={statusColor} />}
-                      {reservation.status === 'delayed' && <AlertCircle size={10} color={statusColor} />}
-                      <Text
-                        className="text-xs ml-1 capitalize"
-                        style={{ color: statusColor, fontFamily: 'DMSans_500Medium' }}
+                  <View className="flex-row items-center gap-2">
+                    {liveStatus ? (
+                      <LiveStatusChip status={liveStatus} />
+                    ) : (
+                      <View
+                        className="px-2 py-0.5 rounded-full flex-row items-center"
+                        style={{ backgroundColor: statusColor + '20' }}
                       >
-                        {reservation.status}
-                      </Text>
-                    </View>
-                  )}
+                        {reservation.status === 'confirmed' && <CheckCircle size={10} color={statusColor} />}
+                        {reservation.status === 'delayed' && <AlertCircle size={10} color={statusColor} />}
+                        <Text
+                          className="text-xs ml-1 capitalize"
+                          style={{ color: statusColor, fontFamily: 'DMSans_500Medium' }}
+                        >
+                          {reservation.status}
+                        </Text>
+                      </View>
+                    )}
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        Alert.alert(
+                          reservation.title,
+                          'Choose an action',
+                          [
+                            {
+                              text: 'Edit',
+                              onPress: handleEdit,
+                            },
+                            {
+                              text: 'Delete',
+                              onPress: handleDelete,
+                              style: 'destructive',
+                            },
+                            {
+                              text: 'Cancel',
+                              style: 'cancel',
+                            },
+                          ]
+                        );
+                      }}
+                      className="p-1"
+                    >
+                      <MoreVertical size={16} color="#64748B" />
+                    </Pressable>
+                  </View>
                 </View>
                 {reservation.subtitle && (
                   <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
@@ -198,19 +274,19 @@ function ReservationCard({ reservation, index, isFirst, isLast }: {
                 <View className="flex-row items-center mt-2">
                   <Clock size={12} color="#64748B" />
                   <Text className="text-slate-500 text-xs ml-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-                    {formatTime(reservation.startTime)}
-                    {reservation.endTime && ` - ${formatTime(reservation.endTime)}`}
+                    {formatTime(new Date(reservation.start_time))}
+                    {reservation.end_time && ` - ${formatTime(new Date(reservation.end_time))}`}
                   </Text>
                 </View>
               </View>
             </View>
 
             {/* Alert */}
-            {reservation.alertMessage && (
+            {reservation.alert_message && (
               <View className="mt-3 bg-amber-500/10 rounded-xl p-3 flex-row items-center">
                 <AlertCircle size={14} color="#F59E0B" />
                 <Text className="text-amber-400 text-xs ml-2 flex-1" style={{ fontFamily: 'DMSans_500Medium' }}>
-                  {reservation.alertMessage}
+                  {reservation.alert_message}
                 </Text>
               </View>
             )}
@@ -231,7 +307,7 @@ function ReservationCard({ reservation, index, isFirst, isLast }: {
                 </View>
               )}
 
-              {reservation.confirmationNumber && (
+              {reservation.confirmation_number && (
                 <Pressable
                   onPress={handleCopyConfirmation}
                   className="flex-row items-center justify-between bg-slate-700/30 rounded-xl p-3 mb-3"
@@ -241,7 +317,7 @@ function ReservationCard({ reservation, index, isFirst, isLast }: {
                       Confirmation
                     </Text>
                     <Text className="text-white text-sm mt-0.5" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-                      {reservation.confirmationNumber}
+                      {reservation.confirmation_number}
                     </Text>
                   </View>
                   <Copy size={16} color="#64748B" />
@@ -273,10 +349,44 @@ function ReservationCard({ reservation, index, isFirst, isLast }: {
 export default function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const trips = useTripStore((s) => s.trips);
-
-  const trip = trips.find((t) => t.id === id);
+  
+  const { data: trip, isLoading: tripLoading } = useTrip(id);
+  const { data: reservations = [], isLoading: reservationsLoading } = useReservations(id);
+  const { data: weather } = useWeather(trip?.destination);
+  const deleteTrip = useDeleteTrip();
+  
   const scrollY = useSharedValue(0);
+  const isLoading = tripLoading || reservationsLoading;
+
+  const handleDeleteTrip = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    Alert.alert(
+      'Delete Trip',
+      `Are you sure you want to delete "${trip?.name}"? This will also delete all reservations and receipts.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteTrip.mutateAsync(id);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              router.back();
+            } catch (error: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('Error', error.message || 'Failed to delete trip');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -295,6 +405,17 @@ export default function TripDetailScreen() {
     opacity: interpolate(scrollY.value, [100, 180], [0, 1], Extrapolate.CLAMP),
   }));
 
+  if (isLoading) {
+    return (
+      <View className="flex-1 bg-slate-950 items-center justify-center">
+        <ActivityIndicator size="large" color="#3b82f6" />
+        <Text className="text-slate-400 mt-4" style={{ fontFamily: 'DMSans_400Regular' }}>
+          Loading trip...
+        </Text>
+      </View>
+    );
+  }
+
   if (!trip) {
     return (
       <View className="flex-1 bg-slate-950 items-center justify-center">
@@ -304,26 +425,26 @@ export default function TripDetailScreen() {
   }
 
   // Group reservations by date
-  const reservationsByDate = trip.reservations.reduce((acc, res) => {
-    const dateKey = formatDateLong(res.startTime);
+  const reservationsByDate = reservations.reduce((acc: Record<string, Reservation[]>, res: Reservation) => {
+    const dateKey = formatDateLong(new Date(res.start_time));
     if (!acc[dateKey]) {
       acc[dateKey] = [];
     }
     acc[dateKey].push(res);
     return acc;
-  }, {} as Record<string, Reservation[]>);
+  }, {});
 
   const sortedDates = Object.keys(reservationsByDate).sort(
-    (a, b) => new Date(reservationsByDate[a][0].startTime).getTime() - new Date(reservationsByDate[b][0].startTime).getTime()
+    (a, b) => new Date(reservationsByDate[a][0].start_time).getTime() - new Date(reservationsByDate[b][0].start_time).getTime()
   );
 
   // Create sections for SectionList with sticky headers
   const sections = sortedDates.map((dateKey) => {
     const dateReservations = reservationsByDate[dateKey];
     const firstRes = dateReservations[0];
-    const dateLabel = isToday(firstRes.startTime)
+    const dateLabel = isToday(new Date(firstRes.start_time))
       ? 'Today'
-      : isTomorrow(firstRes.startTime)
+      : isTomorrow(new Date(firstRes.start_time))
       ? 'Tomorrow'
       : dateKey;
 
@@ -340,7 +461,7 @@ export default function TripDetailScreen() {
         style={[headerAnimatedStyle, { position: 'absolute', top: 0, left: 0, right: 0, height: HEADER_HEIGHT }]}
       >
         <Image
-          source={{ uri: trip.coverImage ?? 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=800' }}
+          source={{ uri: trip.cover_image ?? 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=800' }}
           style={{ width: SCREEN_WIDTH, height: HEADER_HEIGHT }}
           resizeMode="cover"
         />
@@ -374,6 +495,15 @@ export default function TripDetailScreen() {
             <Pressable
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push(`/edit-trip?id=${trip.id}`);
+              }}
+              className="bg-black/30 p-2.5 rounded-full"
+            >
+              <Edit3 size={20} color="#FFFFFF" />
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 router.push(`/add-reservation?tripId=${trip.id}`);
               }}
               className="bg-black/30 p-2.5 rounded-full"
@@ -381,7 +511,15 @@ export default function TripDetailScreen() {
               <Plus size={20} color="#FFFFFF" />
             </Pressable>
             <Pressable
-              onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+              onPress={async () => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                if (trip) {
+                  const success = await shareTripNative(trip);
+                  if (success) {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  }
+                }
+              }}
               className="bg-black/30 p-2.5 rounded-full"
             >
               <Share2 size={20} color="#FFFFFF" />
@@ -401,9 +539,11 @@ export default function TripDetailScreen() {
         keyExtractor={(item) => item.id}
         ListHeaderComponent={() => (
           <View className="px-5 pb-6">
-            <Text className="text-white text-3xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-              {trip.name}
-            </Text>
+            <Pressable onLongPress={handleDeleteTrip}>
+              <Text className="text-white text-3xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                {trip.name}
+              </Text>
+            </Pressable>
             <View className="flex-row items-center mt-2">
               <MapPin size={16} color="#94A3B8" />
               <Text className="text-slate-400 text-base ml-1" style={{ fontFamily: 'DMSans_400Regular' }}>
@@ -411,12 +551,12 @@ export default function TripDetailScreen() {
               </Text>
               {trip.status !== 'completed' && (
                 <Text className="text-slate-500 text-base ml-1.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                  · {getWeatherForDestination(trip.destination).temperature}° {getWeatherIcon(getWeatherForDestination(trip.destination).condition)}
+                  · {weather?.temperature ?? '--'}° {weather && getWeatherIcon(weather.condition)}
                 </Text>
               )}
             </View>
             <Text className="text-slate-500 text-sm mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-              {formatDateLong(trip.startDate)} - {formatDateLong(trip.endDate)}
+              {formatDateLong(new Date(trip.start_date))} - {formatDateLong(new Date(trip.end_date))}
             </Text>
           </View>
         )}
@@ -437,6 +577,7 @@ export default function TripDetailScreen() {
               index={index}
               isFirst={index === 0}
               isLast={index === section.data.length - 1}
+              tripId={id}
             />
           </View>
         )}

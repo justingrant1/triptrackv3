@@ -1,6 +1,5 @@
 const { getDefaultConfig } = require("expo/metro-config");
 const { withNativeWind } = require("nativewind/metro");
-const { withVibecodeMetro } = require("@vibecodeapp/sdk/metro");
 
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
@@ -11,9 +10,10 @@ config.resolver.useWatchman = false;
 // Configure asset and source extensions.
 const { assetExts, sourceExts } = config.resolver;
 
-// SVG transformer is configured by withVibecodeMetro
+// Configure SVG support
 config.transformer = {
   ...config.transformer,
+  babelTransformerPath: require.resolve("react-native-svg-transformer"),
   getTransformOptions: async () => ({
     transform: {
       experimentalImportSupport: false,
@@ -22,32 +22,13 @@ config.transformer = {
   }),
 };
 
-// Configure resolver with SVG support and web platform mocking
+// Configure resolver with SVG support
 config.resolver = {
   ...config.resolver,
   assetExts: assetExts.filter((ext) => ext !== "svg"),
   sourceExts: [...sourceExts, "svg"],
   useWatchman: false,
-  resolveRequest: (context, moduleName, platform) => {
-    // Mock native-only modules on web
-    if (platform === "web") {
-      const nativeOnlyModules = [
-        "react-native-pager-view",
-        "reanimated-tab-view",
-        "@bottom-tabs/react-navigation",
-      ];
-
-      if (nativeOnlyModules.some((mod) => moduleName.includes(mod))) {
-        return {
-          type: "empty",
-        };
-      }
-    }
-
-    // Fallback to default resolution
-    return context.resolveRequest(context, moduleName, platform);
-  },
 };
 
 // Integrate NativeWind with the Metro configuration.
-module.exports = withNativeWind(withVibecodeMetro(config), { input: "./global.css" });
+module.exports = withNativeWind(config, { input: "./global.css" });

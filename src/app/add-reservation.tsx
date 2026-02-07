@@ -7,6 +7,8 @@ import {
   TextInput,
   Modal,
   Platform,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -30,7 +32,11 @@ import {
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { useTripStore, Reservation, ReservationType } from '@/lib/store';
+import { useTrip } from '@/lib/hooks/useTrips';
+import { useCreateReservation } from '@/lib/hooks/useReservations';
+import type { Reservation } from '@/lib/types/database';
+
+type ReservationType = Reservation['type'];
 
 const RESERVATION_TYPES: { type: ReservationType; label: string; icon: React.ReactNode; color: string }[] = [
   { type: 'flight', label: 'Flight', icon: <Plane size={20} color="#3B82F6" />, color: '#3B82F6' },
@@ -62,9 +68,9 @@ const formatDisplayTime = (date: Date | null): string => {
 export default function AddReservationScreen() {
   const { tripId } = useLocalSearchParams<{ tripId: string }>();
   const router = useRouter();
-  const addReservation = useTripStore((s) => s.addReservation);
-  const trips = useTripStore((s) => s.trips);
-  const trip = trips.find((t) => t.id === tripId);
+  
+  const { data: trip, isLoading: tripLoading } = useTrip(tripId);
+  const createReservation = useCreateReservation();
 
   const [selectedType, setSelectedType] = React.useState<ReservationType>('flight');
   const [title, setTitle] = React.useState('');
@@ -82,6 +88,7 @@ export default function AddReservationScreen() {
 
   const selectedTypeInfo = RESERVATION_TYPES.find((t) => t.type === selectedType);
   const isValid = title.trim() && startDateTime;
+  const isSaving = createReservation.isPending;
 
   const getPlaceholders = () => {
     switch (selectedType) {
@@ -109,7 +116,7 @@ export default function AddReservationScreen() {
     setPickerTarget(target);
     setPickerMode(mode);
     const currentDate = target === 'start' ? startDateTime : endDateTime;
-    setTempDate(currentDate ?? (trip ? new Date(trip.startDate) : new Date()));
+    setTempDate(currentDate ?? (trip ? new Date(trip.start_date) : new Date()));
     setShowPicker(true);
   };
 
@@ -157,7 +164,7 @@ export default function AddReservationScreen() {
     setShowPicker(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!isValid || !startDateTime || !tripId) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
@@ -165,22 +172,28 @@ export default function AddReservationScreen() {
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const newReservation: Reservation = {
-      id: `res-${Date.now()}`,
-      tripId: tripId,
-      type: selectedType,
-      title: title.trim(),
-      subtitle: subtitle.trim() || undefined,
-      startTime: startDateTime,
-      endTime: endDateTime ?? undefined,
-      address: address.trim() || undefined,
-      confirmationNumber: confirmationNumber.trim() || undefined,
-      status: 'confirmed',
-      details: {},
-    };
+    try {
+      await createReservation.mutateAsync({
+        trip_id: tripId,
+        type: selectedType,
+        title: title.trim(),
+        subtitle: subtitle.trim() || null,
+        start_time: startDateTime.toISOString(),
+        end_time: endDateTime ? endDateTime.toISOString() : null,
+        location: null,
+        address: address.trim() || null,
+        confirmation_number: confirmationNumber.trim() || null,
+        details: {},
+        status: 'confirmed',
+        alert_message: null,
+      });
 
-    addReservation(tripId, newReservation);
-    router.back();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      router.back();
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Failed to create reservation');
+    }
   };
 
   if (!trip) {
@@ -218,10 +231,14 @@ export default function AddReservationScreen() {
           </Text>
           <Pressable
             onPress={handleSave}
-            disabled={!isValid}
-            className={`p-2.5 rounded-full ${isValid ? 'bg-blue-500' : 'bg-slate-700'}`}
+            disabled={!isValid || isSaving}
+            className={`p-2.5 rounded-full ${isValid && !isSaving ? 'bg-blue-500' : 'bg-slate-700'}`}
           >
-            <Check size={22} color={isValid ? '#FFFFFF' : '#64748B'} />
+            {isSaving ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Check size={22} color={isValid ? '#FFFFFF' : '#64748B'} />
+            )}
           </Pressable>
         </View>
 
