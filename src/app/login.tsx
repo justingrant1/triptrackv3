@@ -336,7 +336,13 @@ export default function LoginScreen() {
 
               {/* Forgot Password */}
               {isLogin && (
-                <Pressable className="self-end mb-6 -mt-2">
+                <Pressable 
+                  className="self-end mb-6 -mt-2"
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push('/forgot-password');
+                  }}
+                >
                   <Text className="text-blue-400 text-sm font-medium">
                     Forgot password?
                   </Text>

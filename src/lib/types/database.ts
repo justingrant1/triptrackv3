@@ -69,6 +69,19 @@ export interface Notification {
   created_at: string;
 }
 
+export interface ConnectedAccount {
+  id: string;
+  user_id: string;
+  provider: 'gmail' | 'outlook' | 'icloud';
+  email: string;
+  access_token: string;
+  refresh_token: string | null;
+  token_expiry: string | null;
+  last_sync: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Insert types (omit auto-generated fields)
 export type TripInsert = Omit<Trip, 'id' | 'created_at' | 'updated_at' | 'summary'>;
 export type TripUpdate = Partial<TripInsert>;
@@ -78,3 +91,6 @@ export type ReservationUpdate = Partial<ReservationInsert>;
 
 export type ReceiptInsert = Omit<Receipt, 'id' | 'created_at'>;
 export type ReceiptUpdate = Partial<ReceiptInsert>;
+
+export type ConnectedAccountInsert = Omit<ConnectedAccount, 'id' | 'created_at' | 'updated_at' | 'user_id'>;
+export type ConnectedAccountUpdate = Partial<ConnectedAccountInsert>;

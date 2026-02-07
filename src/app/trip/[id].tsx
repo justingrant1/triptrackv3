@@ -41,6 +41,7 @@ import { formatTime, formatDate, formatDateLong, isToday, isTomorrow, getLiveSta
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { shareTripNative } from '@/lib/sharing';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 type ReservationType = Reservation['type'];
 
@@ -346,7 +347,7 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
   );
 }
 
-export default function TripDetailScreen() {
+function TripDetailScreenContent() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   
@@ -622,5 +623,16 @@ export default function TripDetailScreen() {
         </Pressable>
       </Animated.View>
     </View>
+  );
+}
+
+export default function TripDetailScreen() {
+  return (
+    <ErrorBoundary
+      fallbackTitle="Trip Error"
+      fallbackMessage="Something went wrong loading this trip. Please try again."
+    >
+      <TripDetailScreenContent />
+    </ErrorBoundary>
   );
 }

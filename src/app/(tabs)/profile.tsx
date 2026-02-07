@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Link2,
   AtSign,
+  Trash2,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -32,6 +33,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { useProfile } from '@/lib/hooks/useProfile';
 import { Alert, Image } from 'react-native';
+import { deleteAccount } from '@/lib/auth';
 
 function MenuSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -121,6 +123,58 @@ export default function ProfileScreen() {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             await logout();
             router.replace('/login');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your account and all associated data including trips, reservations, and receipts. This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            
+            // Second confirmation
+            Alert.alert(
+              'Are you absolutely sure?',
+              'Type DELETE to confirm account deletion.',
+              [
+                {
+                  text: 'Cancel',
+                  style: 'cancel',
+                },
+                {
+                  text: 'Delete Forever',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      const { error } = await deleteAccount();
+                      
+                      if (error) {
+                        Alert.alert('Error', error.message || 'Failed to delete account');
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                      } else {
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        router.replace('/login');
+                      }
+                    } catch (error: any) {
+                      Alert.alert('Error', error.message || 'Failed to delete account');
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                    }
+                  },
+                },
+              ]
+            );
           },
         },
       ]
@@ -375,6 +429,15 @@ export default function ProfileScreen() {
                 label="Sign Out"
                 onPress={handleSignOut}
                 index={7}
+                trailing={null}
+              />
+              <MenuItem
+                icon={<Trash2 size={18} color="#DC2626" />}
+                iconColor="#DC2626"
+                label="Delete Account"
+                sublabel="Permanently delete your account and all data"
+                onPress={handleDeleteAccount}
+                index={8}
                 isLast
                 trailing={null}
               />

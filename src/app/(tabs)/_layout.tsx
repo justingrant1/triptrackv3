@@ -5,6 +5,7 @@ import { Compass, Map, Receipt, User, Sparkles } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 function TabBarIcon({ icon: Icon, color, focused }: { icon: typeof Compass; color: string; focused: boolean }) {
   return (
@@ -56,26 +57,30 @@ function AskAIButton() {
 
 export default function TabLayout() {
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: '#FFFFFF',
-        tabBarInactiveTintColor: '#64748B',
-        tabBarStyle: {
-          backgroundColor: '#0A0F1C',
-          borderTopColor: '#1E293B',
-          borderTopWidth: 1,
-          height: 88,
-          paddingTop: 8,
-          paddingBottom: 28,
-        },
-        tabBarLabelStyle: {
-          fontFamily: 'DMSans_500Medium',
-          fontSize: 11,
-          marginTop: 4,
-        },
-      }}
+    <ErrorBoundary
+      fallbackTitle="Tab Error"
+      fallbackMessage="Something went wrong with this tab. Please try again."
     >
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#64748B',
+          tabBarStyle: {
+            backgroundColor: '#0A0F1C',
+            borderTopColor: '#1E293B',
+            borderTopWidth: 1,
+            height: 88,
+            paddingTop: 8,
+            paddingBottom: 28,
+          },
+          tabBarLabelStyle: {
+            fontFamily: 'DMSans_500Medium',
+            fontSize: 11,
+            marginTop: 4,
+          },
+        }}
+      >
       <Tabs.Screen
         name="trips"
         options={{
@@ -125,5 +130,6 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </ErrorBoundary>
   );
 }

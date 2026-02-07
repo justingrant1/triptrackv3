@@ -171,6 +171,41 @@ export async function updatePassword(newPassword: string): Promise<{ error: Auth
 }
 
 /**
+ * Delete the current user account
+ * WARNING: This will permanently delete the user and all associated data
+ */
+export async function deleteAccount(): Promise<{ error: AuthError | null }> {
+  try {
+    // First, get the current user
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      return { error: { message: 'No authenticated user found' } };
+    }
+
+    // Delete the user account (this will cascade delete all related data due to RLS policies)
+    const { error } = await supabase.rpc('delete_user');
+
+    if (error) {
+      // If RPC doesn't exist, try the admin API approach
+      // Note: This requires the user to be authenticated
+      const { error: deleteError } = await supabase.auth.admin.deleteUser(user.id);
+      
+      if (deleteError) {
+        return { error: { message: deleteError.message } };
+      }
+    }
+
+    // Sign out after deletion
+    await supabase.auth.signOut();
+
+    return { error: null };
+  } catch (error: any) {
+    return { error: { message: error.message || 'Failed to delete account' } };
+  }
+}
+
+/**
  * Listen to auth state changes
  */
 export function onAuthStateChange(callback: (event: string, session: Session | null) => void) {

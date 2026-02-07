@@ -229,21 +229,57 @@ export default function SubscriptionScreen() {
       const offerings = await getOfferings();
       
       if (offerings?.current) {
-        // Find monthly and annual packages
-        const monthly = offerings.current.availablePackages.find(
-          pkg => pkg.identifier === '$rc_monthly' || pkg.packageType === 'MONTHLY'
-        );
-        const annual = offerings.current.availablePackages.find(
-          pkg => pkg.identifier === '$rc_annual' || pkg.packageType === 'ANNUAL'
-        );
+        const packages = offerings.current.availablePackages;
+        
+        // Log all available packages for debugging
+        console.log('📦 All available packages:', packages.map(pkg => ({
+          identifier: pkg.identifier,
+          packageType: pkg.packageType,
+          price: pkg.product.priceString,
+        })));
+        
+        // Find monthly package - check multiple possible identifiers and types
+        const monthly = packages.find(pkg => {
+          const id = pkg.identifier?.toLowerCase() || '';
+          const type = String(pkg.packageType || '').toUpperCase();
+          return (
+            id.includes('monthly') || 
+            id === '$rc_monthly' || 
+            type === 'MONTHLY' ||
+            type.includes('MONTH')
+          );
+        });
+        
+        // Find annual package - check multiple possible identifiers and types
+        const annual = packages.find(pkg => {
+          const id = pkg.identifier?.toLowerCase() || '';
+          const type = String(pkg.packageType || '').toUpperCase();
+          return (
+            id.includes('annual') || 
+            id.includes('yearly') ||
+            id === '$rc_annual' || 
+            type === 'ANNUAL' ||
+            type === 'YEARLY' ||
+            type.includes('YEAR')
+          );
+        });
         
         setMonthlyPackage(monthly || null);
         setAnnualPackage(annual || null);
         
-        console.log('📦 Loaded packages:', {
-          monthly: monthly ? getPackageDetails(monthly) : null,
-          annual: annual ? getPackageDetails(annual) : null,
+        console.log('📦 Matched packages:', {
+          monthly: monthly ? getPackageDetails(monthly) : 'NOT FOUND',
+          annual: annual ? getPackageDetails(annual) : 'NOT FOUND',
         });
+        
+        // If only one package type is available, auto-select it
+        if (monthly && !annual) {
+          console.log('⚠️ Only monthly package available, auto-selecting monthly');
+          setBillingPeriod('monthly');
+        } else if (annual && !monthly) {
+          console.log('⚠️ Only annual package available, auto-selecting annual');
+          setBillingPeriod('annual');
+        }
       }
     } catch (error) {
       console.error('Failed to load offerings:', error);
@@ -270,10 +306,26 @@ export default function SubscriptionScreen() {
   };
 
   const handlePurchasePro = async () => {
-    const selectedPackage = billingPeriod === 'monthly' ? monthlyPackage : annualPackage;
+    // Try to get the selected package, with fallback logic
+    let selectedPackage = billingPeriod === 'monthly' ? monthlyPackage : annualPackage;
     
+    // Fallback: if selected package is null, try the other one
     if (!selectedPackage) {
-      Alert.alert('Error', 'Subscription package not available. Please try again.');
+      console.warn(`⚠️ ${billingPeriod} package not available, trying fallback...`);
+      selectedPackage = billingPeriod === 'monthly' ? annualPackage : monthlyPackage;
+      
+      if (selectedPackage) {
+        console.log(`✅ Using ${billingPeriod === 'monthly' ? 'annual' : 'monthly'} package as fallback`);
+      }
+    }
+    
+    // If still no package, show error
+    if (!selectedPackage) {
+      console.error('❌ No subscription packages available');
+      Alert.alert(
+        'Error', 
+        'No subscription packages are currently available. Please check your internet connection and try again, or contact support if the issue persists.'
+      );
       return;
     }
 
@@ -281,6 +333,11 @@ export default function SubscriptionScreen() {
     setIsPurchasing(true);
 
     try {
+      console.log('💳 Purchasing package:', {
+        identifier: selectedPackage.identifier,
+        price: selectedPackage.product.priceString,
+      });
+      
       await purchasePackage(selectedPackage);
       
       // Refresh profile to get updated plan
@@ -295,6 +352,7 @@ export default function SubscriptionScreen() {
     } catch (error: any) {
       if (!error.userCancelled) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        console.error('❌ Purchase failed:', error);
         Alert.alert('Purchase Failed', error.message || 'Something went wrong. Please try again.');
       }
     } finally {

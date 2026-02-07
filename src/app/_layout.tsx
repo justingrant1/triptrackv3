@@ -17,6 +17,8 @@ import {
 import { SpaceMono_400Regular, SpaceMono_700Bold } from '@expo-google-fonts/space-mono';
 import { initializeRevenueCat } from '@/lib/revenuecat';
 import { subscribeToDeepLinks, getInitialDeepLink, handleDeepLink } from '@/lib/sharing';
+import { updateTripStatuses } from '@/lib/trip-status';
+import { OfflineIndicator } from '@/components/OfflineIndicator';
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
@@ -26,7 +28,27 @@ export const unstable_settings = {
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-const queryClient = new QueryClient();
+// Configure React Query for offline-first behavior
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Cache data for 24 hours
+      gcTime: 1000 * 60 * 60 * 24,
+      // Keep data fresh for 5 minutes
+      staleTime: 1000 * 60 * 5,
+      // Retry failed requests
+      retry: 2,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      // Network mode for offline support
+      networkMode: 'offlineFirst',
+    },
+    mutations: {
+      // Retry mutations on network errors
+      retry: 1,
+      networkMode: 'offlineFirst',
+    },
+  },
+});
 
 function RootLayoutNav({
   colorScheme,
@@ -49,6 +71,19 @@ function RootLayoutNav({
     if (user?.id) {
       initializeRevenueCat(user.id).catch((error) => {
         console.error('Failed to initialize RevenueCat:', error);
+      });
+    }
+  }, [user?.id]);
+
+  // Update trip statuses when user logs in
+  useEffect(() => {
+    if (user?.id) {
+      updateTripStatuses(user.id).then(({ updated, error }) => {
+        if (error) {
+          console.error('Failed to update trip statuses:', error);
+        } else if (updated > 0) {
+          console.log(`Updated ${updated} trip status(es)`);
+        }
       });
     }
   }, [user?.id]);
@@ -149,6 +184,26 @@ function RootLayoutNav({
           options={{ presentation: 'modal', headerShown: false }}
         />
         <Stack.Screen
+          name="edit-reservation"
+          options={{ presentation: 'modal', headerShown: false }}
+        />
+        <Stack.Screen
+          name="edit-receipt"
+          options={{ presentation: 'modal', headerShown: false }}
+        />
+        <Stack.Screen
+          name="parse-email"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="forgot-password"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="onboarding"
+          options={{ headerShown: false, animation: 'fade' }}
+        />
+        <Stack.Screen
           name="login"
           options={{ headerShown: false, animation: 'fade' }}
         />
@@ -173,6 +228,7 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
         <RootLayoutNav colorScheme={colorScheme} fontsLoaded={fontsLoaded} />
+        <OfflineIndicator />
       </GestureHandlerRootView>
     </QueryClientProvider>
   );

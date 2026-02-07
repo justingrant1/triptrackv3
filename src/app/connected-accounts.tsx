@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, ScrollView, Pressable, Image } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, ScrollView, Pressable, Image, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -12,19 +12,20 @@ import {
   RefreshCw,
   Unlink,
   Zap,
+  Loader2,
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { UpgradeModal } from '@/components/UpgradeModal';
-
-interface ConnectedAccount {
-  id: string;
-  provider: 'gmail' | 'outlook' | 'icloud';
-  email: string;
-  connected: boolean;
-  lastSync?: Date;
-}
+import {
+  useConnectedAccounts,
+  useAddConnectedAccount,
+  useDeleteConnectedAccount,
+  useSyncGmail,
+} from '@/lib/hooks/useConnectedAccounts';
+import { useGoogleAuthRequest, exchangeCodeForTokens } from '@/lib/google-auth';
+import { ResponseType } from 'expo-auth-session';
 
 const providerInfo = {
   gmail: {
@@ -46,21 +47,59 @@ const providerInfo = {
 
 export default function ConnectedAccountsScreen() {
   const router = useRouter();
-  const [accounts, setAccounts] = React.useState<ConnectedAccount[]>([
-    {
-      id: '1',
-      provider: 'gmail',
-      email: 'alex.chen@gmail.com',
-      connected: true,
-      lastSync: new Date(Date.now() - 5 * 60 * 1000),
-    },
-  ]);
+  const { data: accounts = [], isLoading } = useConnectedAccounts();
+  const addAccount = useAddConnectedAccount();
+  const deleteAccount = useDeleteConnectedAccount();
+  const syncGmail = useSyncGmail();
 
-  const [isConnecting, setIsConnecting] = React.useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
   const { canConnectGmail } = useSubscription();
 
-  const handleConnectGmail = () => {
+  // Google OAuth
+  const { request, response, promptAsync, redirectUri } = useGoogleAuthRequest();
+
+  // Handle OAuth response
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { code } = response.params;
+      handleGoogleAuthSuccess(code);
+    } else if (response?.type === 'error') {
+      Alert.alert('Authentication Error', 'Failed to connect Gmail account');
+    }
+  }, [response]);
+
+  const handleGoogleAuthSuccess = async (code: string) => {
+    try {
+      // Exchange code for tokens
+      const tokenData = await exchangeCodeForTokens(
+        code,
+        redirectUri,
+        request?.codeVerifier
+      );
+
+      if (tokenData.error || !tokenData.accessToken) {
+        throw new Error(tokenData.error || 'Failed to get access token');
+      }
+
+      // Save to database
+      await addAccount.mutateAsync({
+        provider: 'gmail',
+        email: tokenData.email,
+        access_token: tokenData.accessToken,
+        refresh_token: tokenData.refreshToken,
+        token_expiry: null,
+        last_sync: null,
+      });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Gmail account connected successfully!');
+    } catch (error: any) {
+      console.error('Error connecting Gmail:', error);
+      Alert.alert('Error', error.message || 'Failed to connect Gmail account');
+    }
+  };
+
+  const handleConnectGmail = async () => {
     // Check if user can connect Gmail (Pro feature)
     if (!canConnectGmail) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -69,12 +108,15 @@ export default function ConnectedAccountsScreen() {
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setIsConnecting(true);
-    // Simulate OAuth flow
-    setTimeout(() => {
-      setIsConnecting(false);
-      // In real app, this would open OAuth
-    }, 1000);
+
+    // Check if request is ready
+    if (!request) {
+      Alert.alert('Error', 'OAuth configuration not ready. Please try again.');
+      return;
+    }
+
+    // Trigger OAuth flow
+    await promptAsync();
   };
 
   const handleConnectOutlook = () => {
@@ -86,27 +128,52 @@ export default function ConnectedAccountsScreen() {
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // Would open Outlook OAuth
+    Alert.alert('Coming Soon', 'Outlook integration will be available soon!');
   };
 
-  const handleDisconnect = (id: string) => {
+  const handleDisconnect = (accountId: string, email: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setAccounts(accounts.filter(a => a.id !== id));
+    Alert.alert(
+      'Disconnect Account',
+      `Are you sure you want to disconnect ${email}? This will stop automatic email scanning.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount.mutateAsync(accountId);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to disconnect account');
+            }
+          },
+        },
+      ]
+    );
   };
 
-  const handleSync = (id: string) => {
+  const handleSync = async (accountId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setAccounts(accounts.map(a =>
-      a.id === id ? { ...a, lastSync: new Date() } : a
-    ));
+    try {
+      await syncGmail.mutateAsync(accountId);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Gmail sync completed! Check your trips for new reservations.');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to sync Gmail');
+    }
   };
 
-  const getTimeSinceSync = (date?: Date) => {
+  const getTimeSinceSync = (date?: string | null) => {
     if (!date) return 'Never';
-    const mins = Math.round((Date.now() - date.getTime()) / 60000);
+    const mins = Math.round((Date.now() - new Date(date).getTime()) / 60000);
     if (mins < 1) return 'Just now';
     if (mins < 60) return `${mins}m ago`;
-    return `${Math.round(mins / 60)}h ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.round(hours / 24);
+    return `${days}d ago`;
   };
 
   return (
@@ -135,32 +202,44 @@ export default function ConnectedAccountsScreen() {
 
         <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
           {/* Auto-Scan Info */}
-          <Animated.View
-            entering={FadeInDown.duration(500)}
-            className="mb-6"
-          >
-            <LinearGradient
-              colors={['#10B981', '#059669']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{ borderRadius: 16, padding: 20 }}
+          {accounts.length > 0 && (
+            <Animated.View
+              entering={FadeInDown.duration(500)}
+              className="mb-6"
             >
-              <View className="flex-row items-center">
-                <Zap size={24} color="#FFFFFF" />
-                <View className="ml-3 flex-1">
-                  <Text className="text-white font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    Auto-Scan Enabled
-                  </Text>
-                  <Text className="text-white/80 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                    We'll automatically find and add your travel emails
-                  </Text>
+              <LinearGradient
+                colors={['#10B981', '#059669']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{ borderRadius: 16, padding: 20 }}
+              >
+                <View className="flex-row items-center">
+                  <Zap size={24} color="#FFFFFF" />
+                  <View className="ml-3 flex-1">
+                    <Text className="text-white font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                      Auto-Scan Enabled
+                    </Text>
+                    <Text className="text-white/80 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      We'll automatically find and add your travel emails
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            </LinearGradient>
-          </Animated.View>
+              </LinearGradient>
+            </Animated.View>
+          )}
+
+          {/* Loading State */}
+          {isLoading && (
+            <View className="items-center justify-center py-12">
+              <Loader2 size={32} color="#3B82F6" className="animate-spin" />
+              <Text className="text-slate-400 mt-4" style={{ fontFamily: 'DMSans_400Regular' }}>
+                Loading accounts...
+              </Text>
+            </View>
+          )}
 
           {/* Connected Accounts */}
-          {accounts.length > 0 && (
+          {!isLoading && accounts.length > 0 && (
             <Animated.View entering={FadeInDown.duration(500).delay(100)}>
               <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-3" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                 Connected
@@ -199,7 +278,7 @@ export default function ConnectedAccountsScreen() {
                             {account.email}
                           </Text>
                           <Text className="text-slate-500 text-xs mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-                            Last sync: {getTimeSinceSync(account.lastSync)}
+                            Last sync: {getTimeSinceSync(account.last_sync)}
                           </Text>
                         </View>
                       </View>
@@ -207,15 +286,21 @@ export default function ConnectedAccountsScreen() {
                       <View className="flex-row mt-3 gap-2">
                         <Pressable
                           onPress={() => handleSync(account.id)}
+                          disabled={syncGmail.isPending}
                           className="flex-1 bg-slate-700/50 py-2.5 rounded-xl flex-row items-center justify-center"
                         >
-                          <RefreshCw size={16} color="#94A3B8" />
+                          {syncGmail.isPending ? (
+                            <Loader2 size={16} color="#94A3B8" className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={16} color="#94A3B8" />
+                          )}
                           <Text className="text-slate-300 text-sm ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
-                            Sync Now
+                            {syncGmail.isPending ? 'Syncing...' : 'Sync Now'}
                           </Text>
                         </Pressable>
                         <Pressable
-                          onPress={() => handleDisconnect(account.id)}
+                          onPress={() => handleDisconnect(account.id, account.email)}
+                          disabled={deleteAccount.isPending}
                           className="bg-red-500/10 py-2.5 px-4 rounded-xl flex-row items-center"
                         >
                           <Unlink size={16} color="#EF4444" />
@@ -229,59 +314,66 @@ export default function ConnectedAccountsScreen() {
           )}
 
           {/* Add Account */}
-          <Animated.View entering={FadeInDown.duration(500).delay(200)}>
-            <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-3" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-              Add Account
-            </Text>
+          {!isLoading && (
+            <Animated.View entering={FadeInDown.duration(500).delay(200)}>
+              <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-3" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                Add Account
+              </Text>
 
-            <View className="gap-3">
-              {/* Gmail */}
-              <Pressable
-                onPress={handleConnectGmail}
-                className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
-              >
-                <View className="w-12 h-12 rounded-xl bg-white items-center justify-center">
-                  <Image
-                    source={{ uri: providerInfo.gmail.logo }}
-                    className="w-7 h-7"
-                    resizeMode="contain"
-                  />
-                </View>
-                <View className="flex-1 ml-3">
-                  <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    Connect Gmail
-                  </Text>
-                  <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
-                    Auto-import travel emails from Google
-                  </Text>
-                </View>
-                <Plus size={20} color="#64748B" />
-              </Pressable>
+              <View className="gap-3">
+                {/* Gmail */}
+                <Pressable
+                  onPress={handleConnectGmail}
+                  disabled={addAccount.isPending}
+                  className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
+                >
+                  <View className="w-12 h-12 rounded-xl bg-white items-center justify-center">
+                    <Image
+                      source={{ uri: providerInfo.gmail.logo }}
+                      className="w-7 h-7"
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <View className="flex-1 ml-3">
+                    <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                      Connect Gmail
+                    </Text>
+                    <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Auto-import travel emails from Google
+                    </Text>
+                  </View>
+                  {addAccount.isPending ? (
+                    <Loader2 size={20} color="#64748B" className="animate-spin" />
+                  ) : (
+                    <Plus size={20} color="#64748B" />
+                  )}
+                </Pressable>
 
-              {/* Outlook */}
-              <Pressable
-                onPress={handleConnectOutlook}
-                className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
-              >
-                <View className="w-12 h-12 rounded-xl bg-white items-center justify-center">
-                  <Image
-                    source={{ uri: providerInfo.outlook.logo }}
-                    className="w-7 h-7"
-                    resizeMode="contain"
-                  />
-                </View>
-                <View className="flex-1 ml-3">
-                  <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    Connect Outlook
-                  </Text>
-                  <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
-                    Auto-import from Microsoft 365
-                  </Text>
-                </View>
-                <Plus size={20} color="#64748B" />
-              </Pressable>
-            </View>
-          </Animated.View>
+                {/* Outlook */}
+                <Pressable
+                  onPress={handleConnectOutlook}
+                  className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
+                >
+                  <View className="w-12 h-12 rounded-xl bg-white items-center justify-center">
+                    <Image
+                      source={{ uri: providerInfo.outlook.logo }}
+                      className="w-7 h-7"
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <View className="flex-1 ml-3">
+                    <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                      Connect Outlook
+                    </Text>
+                    <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Auto-import from Microsoft 365
+                    </Text>
+                  </View>
+                  <Plus size={20} color="#64748B" />
+                </Pressable>
+              </View>
+            </Animated.View>
+          )}
 
           {/* Manual Forward Option */}
           <Animated.View

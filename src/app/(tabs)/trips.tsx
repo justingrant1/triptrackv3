@@ -35,6 +35,8 @@ import type { Trip } from '@/lib/types/database';
 import { formatDateRange, getDaysUntil } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
+import { updateTripStatuses } from '@/lib/trip-status';
+import { useAuthStore } from '@/lib/state/auth-store';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH - 40;
@@ -488,6 +490,7 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
 
 export default function TripsScreen() {
   const router = useRouter();
+  const { user } = useAuthStore();
   const { data: trips = [], isLoading, error, refetch } = useTrips();
   const [refreshing, setRefreshing] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -517,6 +520,13 @@ export default function TripsScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    
+    // Update trip statuses first
+    if (user?.id) {
+      await updateTripStatuses(user.id);
+    }
+    
+    // Then refetch to get updated data
     await refetch();
     setRefreshing(false);
   };
