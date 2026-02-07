@@ -229,45 +229,14 @@ export default function SubscriptionScreen() {
       const offerings = await getOfferings();
       
       if (offerings?.current) {
-        const packages = offerings.current.availablePackages;
-        
-        // Log all available packages for debugging
-        console.log('📦 All available packages:', packages.map(pkg => ({
-          identifier: pkg.identifier,
-          packageType: pkg.packageType,
-          price: pkg.product.priceString,
-        })));
-        
-        // Find monthly package - check multiple possible identifiers and types
-        const monthly = packages.find(pkg => {
-          const id = pkg.identifier?.toLowerCase() || '';
-          const type = String(pkg.packageType || '').toUpperCase();
-          return (
-            id.includes('monthly') || 
-            id === '$rc_monthly' || 
-            type === 'MONTHLY' ||
-            type.includes('MONTH')
-          );
-        });
-        
-        // Find annual package - check multiple possible identifiers and types
-        const annual = packages.find(pkg => {
-          const id = pkg.identifier?.toLowerCase() || '';
-          const type = String(pkg.packageType || '').toUpperCase();
-          return (
-            id.includes('annual') || 
-            id.includes('yearly') ||
-            id === '$rc_annual' || 
-            type === 'ANNUAL' ||
-            type === 'YEARLY' ||
-            type.includes('YEAR')
-          );
-        });
+        // Use SDK's built-in monthly and annual properties
+        const monthly = offerings.current.monthly;
+        const annual = offerings.current.annual;
         
         setMonthlyPackage(monthly || null);
         setAnnualPackage(annual || null);
         
-        console.log('📦 Matched packages:', {
+        console.log('📦 Loaded packages:', {
           monthly: monthly ? getPackageDetails(monthly) : 'NOT FOUND',
           annual: annual ? getPackageDetails(annual) : 'NOT FOUND',
         });

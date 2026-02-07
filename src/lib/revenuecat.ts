@@ -109,14 +109,14 @@ export async function restorePurchases(): Promise<CustomerInfo> {
 
 /**
  * Check if user has Pro entitlement
- * @returns true if user has active "pro" entitlement
+ * @returns true if user has active "TripTrack Pro" entitlement
  */
 export async function checkProEntitlement(): Promise<boolean> {
   try {
     const customerInfo = await Purchases.getCustomerInfo();
-    const hasProEntitlement = customerInfo.entitlements.active['pro'] !== undefined;
+    const hasProEntitlement = customerInfo.entitlements.active['TripTrack Pro'] !== undefined;
     
-    console.log('🔍 Pro entitlement:', hasProEntitlement);
+    console.log('🔍 TripTrack Pro entitlement:', hasProEntitlement);
     
     return hasProEntitlement;
   } catch (error) {
@@ -145,7 +145,7 @@ export async function getCustomerInfo(): Promise<CustomerInfo | null> {
  */
 async function syncSubscriptionStatus(customerInfo: CustomerInfo): Promise<void> {
   try {
-    const hasProEntitlement = customerInfo.entitlements.active['pro'] !== undefined;
+    const hasProEntitlement = customerInfo.entitlements.active['TripTrack Pro'] !== undefined;
     const plan = hasProEntitlement ? 'pro' : 'free';
     
     console.log('🔄 Syncing subscription status to Supabase:', plan);
