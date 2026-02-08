@@ -31,7 +31,8 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { useAuthStore } from '@/lib/state/auth-store';
-import { useProfile } from '@/lib/hooks/useProfile';
+import { useProfile, useForwardingAddress } from '@/lib/hooks/useProfile';
+import { useConnectedAccounts } from '@/lib/hooks/useConnectedAccounts';
 import { Alert, Image } from 'react-native';
 import { deleteAccount } from '@/lib/auth';
 
@@ -104,8 +105,12 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const { data: profile } = useProfile();
+  const { data: connectedAccounts } = useConnectedAccounts();
+  const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
   const [copied, setCopied] = React.useState(false);
   const copyScale = useSharedValue(1);
+  
+  const connectedCount = connectedAccounts?.length || 0;
 
   const handleSignOut = () => {
     Alert.alert(
@@ -181,13 +186,14 @@ export default function ProfileScreen() {
     );
   };
 
-  const forwardingEmail = 'plans@triptrack.ai'; // All users forward to the same address
   const userName = profile?.name || user?.email?.split('@')[0] || 'User';
   const userInitial = userName.charAt(0).toUpperCase();
   const userPlan = profile?.plan || 'free';
 
   const handleCopyEmail = async () => {
-    await Clipboard.setStringAsync(forwardingEmail);
+    if (!forwardingAddress) return;
+    
+    await Clipboard.setStringAsync(forwardingAddress);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setCopied(true);
     copyScale.value = withSequence(
@@ -283,26 +289,40 @@ export default function ProfileScreen() {
                   </View>
                 </View>
 
-                <Pressable
-                  onPress={handleCopyEmail}
-                  className="bg-slate-800/80 rounded-xl p-4 flex-row items-center justify-between"
-                >
-                  <View>
-                    <Text className="text-slate-400 text-xs" style={{ fontFamily: 'DMSans_400Regular' }}>
-                      Your forwarding address
-                    </Text>
-                    <Text className="text-white text-base mt-0.5" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-                      {forwardingEmail}
+                {loadingAddress ? (
+                  <View className="bg-slate-800/80 rounded-xl p-4 items-center">
+                    <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Loading your address...
                     </Text>
                   </View>
-                  <Animated.View style={copyAnimatedStyle}>
-                    {copied ? (
-                      <CheckCircle size={20} color="#10B981" />
-                    ) : (
-                      <Copy size={20} color="#64748B" />
-                    )}
-                  </Animated.View>
-                </Pressable>
+                ) : forwardingAddress ? (
+                  <Pressable
+                    onPress={handleCopyEmail}
+                    className="bg-slate-800/80 rounded-xl p-4 flex-row items-center justify-between"
+                  >
+                    <View className="flex-1">
+                      <Text className="text-slate-400 text-xs" style={{ fontFamily: 'DMSans_400Regular' }}>
+                        Your forwarding address
+                      </Text>
+                      <Text className="text-white text-sm mt-0.5" style={{ fontFamily: 'SpaceMono_700Bold' }} numberOfLines={1}>
+                        {forwardingAddress}
+                      </Text>
+                    </View>
+                    <Animated.View style={copyAnimatedStyle}>
+                      {copied ? (
+                        <CheckCircle size={20} color="#10B981" />
+                      ) : (
+                        <Copy size={20} color="#64748B" />
+                      )}
+                    </Animated.View>
+                  </Pressable>
+                ) : (
+                  <View className="bg-slate-800/80 rounded-xl p-4">
+                    <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Unable to load forwarding address
+                    </Text>
+                  </View>
+                )}
 
                 <View className="mt-4 gap-2">
                   <Text className="text-slate-300 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
@@ -357,20 +377,14 @@ export default function ProfileScreen() {
                 onPress={() => router.push('/connected-accounts')}
                 index={1}
                 badge={
-                  <View className="bg-emerald-500/20 px-2 py-0.5 rounded-full ml-2">
-                    <Text className="text-emerald-400 text-xs" style={{ fontFamily: 'DMSans_500Medium' }}>
-                      1 connected
-                    </Text>
-                  </View>
+                  connectedCount > 0 ? (
+                    <View className="bg-emerald-500/20 px-2 py-0.5 rounded-full ml-2">
+                      <Text className="text-emerald-400 text-xs" style={{ fontFamily: 'DMSans_500Medium' }}>
+                        {connectedCount} connected
+                      </Text>
+                    </View>
+                  ) : undefined
                 }
-              />
-              <MenuItem
-                icon={<AtSign size={18} color="#3B82F6" />}
-                iconColor="#3B82F6"
-                label="Trusted Emails"
-                sublabel="Manage allowed senders"
-                onPress={() => router.push('/trusted-emails')}
-                index={2}
                 isLast
               />
             </MenuSection>

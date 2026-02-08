@@ -21,6 +21,8 @@ import {
   Trash2,
   Search,
   X,
+  Mail,
+  Crown,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -36,6 +38,7 @@ import * as Haptics from 'expo-haptics';
 import { useTrips } from '@/lib/hooks/useTrips';
 import { useAllReceipts, useDeleteReceipt } from '@/lib/hooks/useReceipts';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useConnectedAccounts, useScanEmailReceipts } from '@/lib/hooks/useConnectedAccounts';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import type { Receipt, Trip } from '@/lib/types/database';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -274,9 +277,17 @@ export default function ReceiptsScreen() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [showSearch, setShowSearch] = React.useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
+  const [upgradeReason, setUpgradeReason] = React.useState<'csv-export' | 'email-receipts'>('csv-export');
+  const [isScanning, setIsScanning] = React.useState(false);
+  const [scanResult, setScanResult] = React.useState<{ receiptsFound: number; totalAmount: number } | null>(null);
 
-  const { canExportCSV } = useSubscription();
+  const { canExportCSV, isPro } = useSubscription();
+  const { data: connectedAccounts = [] } = useConnectedAccounts();
+  const scanEmailReceipts = useScanEmailReceipts();
   const isLoading = tripsLoading || receiptsLoading;
+
+  // Find Gmail account
+  const gmailAccount = connectedAccounts.find((a: any) => a.provider === 'gmail' || a.provider === 'google');
 
   // Filter receipts based on search query
   const filteredReceipts = React.useMemo(() => {
@@ -322,6 +333,7 @@ export default function ReceiptsScreen() {
     // Check if user can export CSV (Pro feature)
     if (!canExportCSV) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setUpgradeReason('csv-export');
       setShowUpgradeModal(true);
       return;
     }
@@ -371,6 +383,65 @@ export default function ReceiptsScreen() {
   const handleScanReceipt = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push('/add-receipt');
+  };
+
+  const handleScanEmailReceipts = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    // Premium gate
+    if (!isPro) {
+      setUpgradeReason('email-receipts');
+      setShowUpgradeModal(true);
+      return;
+    }
+
+    // Check if Gmail is connected
+    if (!gmailAccount) {
+      Alert.alert(
+        'Connect Gmail',
+        'Connect your Gmail account to scan for travel receipts.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Connect Gmail',
+            onPress: () => router.push('/connected-accounts'),
+          },
+        ]
+      );
+      return;
+    }
+
+    // Start scanning
+    setIsScanning(true);
+    setScanResult(null);
+
+    try {
+      const result = await scanEmailReceipts.mutateAsync(gmailAccount.id);
+      const summary = result?.summary;
+
+      if (summary) {
+        setScanResult({
+          receiptsFound: summary.receiptsCreated || 0,
+          totalAmount: summary.totalAmount || 0,
+        });
+
+        if (summary.receiptsCreated > 0) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          // Refresh receipts list
+          await refetchReceipts();
+        } else {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      }
+
+      // Auto-dismiss result after 5 seconds
+      setTimeout(() => setScanResult(null), 5000);
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Scan Failed', error.message || 'Failed to scan email for receipts');
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   return (
@@ -507,6 +578,86 @@ export default function ReceiptsScreen() {
               </View>
               <ChevronRight size={20} color="#64748B" />
             </Pressable>
+
+            {/* Scan Email for Receipts — Premium Feature */}
+            <Pressable
+              onPress={handleScanEmailReceipts}
+              disabled={isScanning}
+              className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-purple-500/30 mt-3"
+              style={{ opacity: isScanning ? 0.7 : 1 }}
+            >
+              <View className="bg-purple-500/20 p-3 rounded-xl">
+                {isScanning ? (
+                  <ActivityIndicator size={24} color="#A855F7" />
+                ) : (
+                  <Mail size={24} color="#A855F7" />
+                )}
+              </View>
+              <View className="flex-1 ml-3">
+                <View className="flex-row items-center">
+                  <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    {isScanning ? 'Scanning your Gmail...' : 'Scan Email for Receipts'}
+                  </Text>
+                  {!isPro && (
+                    <View className="bg-purple-500/20 px-2 py-0.5 rounded-full ml-2">
+                      <Text className="text-purple-400 text-xs font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                        PRO
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                  {isScanning
+                    ? 'Finding hotel invoices, flight charges, rental receipts...'
+                    : 'Finds travel receipts from your email'}
+                </Text>
+              </View>
+              {!isScanning && (
+                isPro ? (
+                  <ChevronRight size={20} color="#A855F7" />
+                ) : (
+                  <Crown size={20} color="#A855F7" />
+                )
+              )}
+            </Pressable>
+
+            {/* Scan Result Banner */}
+            {scanResult && (
+              <Animated.View
+                entering={FadeInDown.duration(400)}
+                className="mt-3 rounded-2xl p-4 border"
+                style={{
+                  backgroundColor: scanResult.receiptsFound > 0 ? '#10B98115' : '#64748B15',
+                  borderColor: scanResult.receiptsFound > 0 ? '#10B98130' : '#64748B30',
+                }}
+              >
+                <View className="flex-row items-center">
+                  {scanResult.receiptsFound > 0 ? (
+                    <CheckCircle size={20} color="#10B981" />
+                  ) : (
+                    <Mail size={20} color="#64748B" />
+                  )}
+                  <View className="ml-3 flex-1">
+                    <Text
+                      className="font-bold"
+                      style={{
+                        fontFamily: 'DMSans_700Bold',
+                        color: scanResult.receiptsFound > 0 ? '#10B981' : '#94A3B8',
+                      }}
+                    >
+                      {scanResult.receiptsFound > 0
+                        ? `Found ${scanResult.receiptsFound} receipt${scanResult.receiptsFound === 1 ? '' : 's'}${scanResult.totalAmount > 0 ? ` totaling ${formatCurrency(scanResult.totalAmount)}` : ''}`
+                        : 'No new travel receipts found'}
+                    </Text>
+                    <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      {scanResult.receiptsFound > 0
+                        ? 'Receipts have been added to matching trips'
+                        : 'All travel receipts are already imported'}
+                    </Text>
+                  </View>
+                </View>
+              </Animated.View>
+            )}
           </Animated.View>
 
           {/* Receipts List */}
@@ -578,7 +729,7 @@ export default function ReceiptsScreen() {
       <UpgradeModal
         visible={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
-        reason="csv-export"
+        reason={upgradeReason}
       />
     </View>
   );

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -11,6 +11,8 @@ import {
   Ticket,
   Train,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   AlertCircle,
   Clock,
   MapPin,
@@ -20,6 +22,9 @@ import {
   Navigation,
   Phone,
   CreditCard,
+  Hash,
+  Info,
+  ExternalLink,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -69,8 +74,158 @@ const getTypeColor = (type: ReservationType): [string, string] => {
   return colors[type] ?? ['#6B7280', '#4B5563'];
 };
 
+/**
+ * Open directions in user's choice of Apple Maps or Google Maps.
+ * Shows an alert picker on iOS; on Android goes straight to Google Maps.
+ */
+function openDirections(destination: string, reservation?: Reservation) {
+  // For flights, try to use the departure airport as the destination
+  let query = destination;
+  if (reservation?.type === 'flight') {
+    const departureAirport = reservation.details?.['Departure Airport'];
+    if (departureAirport) {
+      query = `${departureAirport} Airport`;
+    }
+  }
+
+  const encoded = encodeURIComponent(query);
+
+  if (Platform.OS === 'ios') {
+    Alert.alert(
+      'Get Directions',
+      `Navigate to ${query}`,
+      [
+        {
+          text: 'Apple Maps',
+          onPress: () => {
+            Linking.openURL(`maps://?daddr=${encoded}&dirflg=d`).catch(() => {
+              Linking.openURL(`https://maps.apple.com/?daddr=${encoded}`);
+            });
+          },
+        },
+        {
+          text: 'Google Maps',
+          onPress: () => {
+            Linking.openURL(`comgooglemaps://?daddr=${encoded}&directionsmode=driving`).catch(() => {
+              Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`);
+            });
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  } else {
+    // Android — use Google Maps intent
+    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`);
+  }
+}
+
+/**
+ * Render the expanded detail rows for a reservation.
+ */
+function ReservationDetails({ reservation }: { reservation: Reservation }) {
+  const [primary] = getTypeColor(reservation.type);
+  const details = reservation.details || {};
+  const detailEntries = Object.entries(details).filter(
+    ([_, value]) => value !== null && value !== undefined && value !== ''
+  );
+
+  return (
+    <View className="mt-3 pt-3 border-t border-slate-700/50">
+      {/* Confirmation Number */}
+      {reservation.confirmation_number && (
+        <View className="flex-row items-center mb-2.5">
+          <Hash size={14} color="#64748B" />
+          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
+            Confirmation
+          </Text>
+          <Text className="text-white text-sm flex-1" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+            {reservation.confirmation_number}
+          </Text>
+        </View>
+      )}
+
+      {/* Location / Address */}
+      {reservation.location && (
+        <View className="flex-row items-center mb-2.5">
+          <MapPin size={14} color="#64748B" />
+          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
+            Location
+          </Text>
+          <Text className="text-slate-300 text-sm flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+            {reservation.location}
+          </Text>
+        </View>
+      )}
+
+      {reservation.address && (
+        <Pressable
+          onPress={() => openDirections(reservation.address!, reservation)}
+          className="flex-row items-center mb-2.5"
+        >
+          <Navigation size={14} color="#3B82F6" />
+          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
+            Address
+          </Text>
+          <Text className="text-blue-400 text-sm flex-1 underline" style={{ fontFamily: 'DMSans_400Regular' }}>
+            {reservation.address}
+          </Text>
+        </Pressable>
+      )}
+
+      {/* Time range */}
+      {reservation.end_time && (
+        <View className="flex-row items-center mb-2.5">
+          <Clock size={14} color="#64748B" />
+          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
+            Time
+          </Text>
+          <Text className="text-slate-300 text-sm flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+            {formatTime(new Date(reservation.start_time))} → {formatTime(new Date(reservation.end_time))}
+          </Text>
+        </View>
+      )}
+
+      {/* Dynamic detail fields */}
+      {detailEntries.map(([key, value]) => (
+        <View key={key} className="flex-row items-center mb-2.5">
+          <Info size={14} color="#64748B" />
+          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
+            {key}
+          </Text>
+          <Text className="text-slate-300 text-sm flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+            {String(value)}
+          </Text>
+        </View>
+      ))}
+
+      {/* Status */}
+      {reservation.status && (
+        <View className="flex-row items-center mb-1">
+          <View
+            className="w-2 h-2 rounded-full mr-2 ml-1"
+            style={{
+              backgroundColor:
+                reservation.status === 'confirmed' ? '#10B981' :
+                reservation.status === 'delayed' ? '#F59E0B' :
+                reservation.status === 'cancelled' ? '#EF4444' : '#6B7280',
+            }}
+          />
+          <Text className="text-slate-500 text-xs w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
+            Status
+          </Text>
+          <Text className="text-slate-300 text-sm capitalize" style={{ fontFamily: 'DMSans_500Medium' }}>
+            {reservation.status}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 function NextUpCard({ reservation }: { reservation: Reservation }) {
   const router = useRouter();
+  const [expanded, setExpanded] = React.useState(false);
   const [primary, secondary] = getTypeColor(reservation.type);
   const countdown = getCountdown(new Date(reservation.start_time));
 
@@ -88,9 +243,9 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
     transform: [{ scale: pulseAnim.value }],
   }));
 
-  const handlePress = () => {
+  const handleToggleExpand = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push(`/trip/${reservation.trip_id}`);
+    setExpanded(!expanded);
   };
 
   // Get gate/seat info for flights
@@ -111,7 +266,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
 
   return (
     <Pressable
-      onPress={handlePress}
+      onPress={handleToggleExpand}
       className="mx-4 overflow-hidden rounded-3xl"
     >
       <Animated.View entering={FadeInDown.duration(600).springify()}>
@@ -187,7 +342,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
               )}
             </View>
 
-            {reservation.address && reservation.type !== 'flight' && (
+            {reservation.address && reservation.type !== 'flight' && !expanded && (
               <View className="flex-row items-center mb-3">
                 <MapPin size={14} color="#64748B" />
                 <Text className="text-slate-400 text-sm ml-2 flex-1" numberOfLines={1} style={{ fontFamily: 'DMSans_400Regular' }}>
@@ -205,11 +360,37 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
               </View>
             )}
 
-            <View className="flex-row items-center justify-end">
+            {/* Expanded Details */}
+            {expanded && (
+              <Animated.View entering={FadeInDown.duration(300)}>
+                <ReservationDetails reservation={reservation} />
+
+                {/* View Full Trip link */}
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push(`/trip/${reservation.trip_id}`);
+                  }}
+                  className="flex-row items-center justify-center mt-3 pt-3 border-t border-slate-700/30"
+                >
+                  <ExternalLink size={14} color="#64748B" />
+                  <Text className="text-slate-500 text-sm ml-1.5" style={{ fontFamily: 'DMSans_500Medium' }}>
+                    View Full Trip
+                  </Text>
+                </Pressable>
+              </Animated.View>
+            )}
+
+            {/* Toggle indicator */}
+            <View className="flex-row items-center justify-end mt-1">
               <Text className="text-slate-400 text-sm mr-1" style={{ fontFamily: 'DMSans_500Medium' }}>
-                View Details
+                {expanded ? 'Less' : 'Details'}
               </Text>
-              <ChevronRight size={16} color="#94A3B8" />
+              {expanded ? (
+                <ChevronUp size={16} color="#94A3B8" />
+              ) : (
+                <ChevronDown size={16} color="#94A3B8" />
+              )}
             </View>
           </View>
         </LinearGradient>
@@ -220,42 +401,71 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
 
 function UpcomingItem({ reservation, index }: { reservation: Reservation; index: number }) {
   const router = useRouter();
+  const [expanded, setExpanded] = React.useState(false);
   const [primary] = getTypeColor(reservation.type);
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push(`/trip/${reservation.trip_id}`);
+    setExpanded(!expanded);
   };
 
   return (
     <Animated.View entering={FadeInRight.duration(400).delay(index * 100)}>
       <Pressable
         onPress={handlePress}
-        className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
+        className="bg-slate-800/50 rounded-2xl p-4 border border-slate-700/50"
       >
-        <View
-          style={{ backgroundColor: primary + '20', padding: 10, borderRadius: 12 }}
-        >
-          <ReservationIcon type={reservation.type} size={18} color={primary} />
-        </View>
-        <View className="flex-1 ml-3">
-          <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-            {reservation.title}
-          </Text>
-          {reservation.subtitle && (
-            <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-              {reservation.subtitle}
+        <View className="flex-row items-center">
+          <View
+            style={{ backgroundColor: primary + '20', padding: 10, borderRadius: 12 }}
+          >
+            <ReservationIcon type={reservation.type} size={18} color={primary} />
+          </View>
+          <View className="flex-1 ml-3">
+            <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+              {reservation.title}
             </Text>
+            {reservation.subtitle && (
+              <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                {reservation.subtitle}
+              </Text>
+            )}
+          </View>
+          <View className="items-end">
+            <Text className="text-white text-sm font-medium" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+              {formatTime(new Date(reservation.start_time))}
+            </Text>
+            <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+              {isToday(new Date(reservation.start_time)) ? 'Today' : isTomorrow(new Date(reservation.start_time)) ? 'Tomorrow' : formatDate(new Date(reservation.start_time))}
+            </Text>
+          </View>
+          {expanded ? (
+            <ChevronUp size={14} color="#64748B" style={{ marginLeft: 6 }} />
+          ) : (
+            <ChevronDown size={14} color="#64748B" style={{ marginLeft: 6 }} />
           )}
         </View>
-        <View className="items-end">
-          <Text className="text-white text-sm font-medium" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-            {formatTime(new Date(reservation.start_time))}
-          </Text>
-          <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {isToday(new Date(reservation.start_time)) ? 'Today' : isTomorrow(new Date(reservation.start_time)) ? 'Tomorrow' : formatDate(new Date(reservation.start_time))}
-          </Text>
-        </View>
+
+        {/* Expanded Details */}
+        {expanded && (
+          <Animated.View entering={FadeInDown.duration(250)}>
+            <ReservationDetails reservation={reservation} />
+
+            {/* View Full Trip link */}
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push(`/trip/${reservation.trip_id}`);
+              }}
+              className="flex-row items-center justify-center mt-2 pt-2 border-t border-slate-700/30"
+            >
+              <ExternalLink size={13} color="#64748B" />
+              <Text className="text-slate-500 text-xs ml-1.5" style={{ fontFamily: 'DMSans_500Medium' }}>
+                View Full Trip
+              </Text>
+            </Pressable>
+          </Animated.View>
+        )}
       </Pressable>
     </Animated.View>
   );
@@ -327,10 +537,17 @@ export default function TodayScreen() {
 
   const handleNavigate = () => {
     if (nextUp?.address) {
-      const encoded = encodeURIComponent(nextUp.address);
-      Linking.openURL(`maps://?q=${encoded}`).catch(() => {
-        Linking.openURL(`https://maps.google.com/?q=${encoded}`);
-      });
+      openDirections(nextUp.address, nextUp);
+    } else if (nextUp) {
+      // No address — try to use departure airport for flights
+      const departureAirport = nextUp.details?.['Departure Airport'];
+      if (departureAirport) {
+        openDirections(`${departureAirport} Airport`, nextUp);
+      } else if (nextUp.location) {
+        openDirections(nextUp.location, nextUp);
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      }
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     }

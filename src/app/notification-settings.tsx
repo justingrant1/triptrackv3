@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Switch } from 'react-native';
+import { View, Text, ScrollView, Pressable, Switch, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { useNotificationPreferences, useUpdateNotificationPreferences } from '@/lib/hooks/useNotificationPreferences';
 
 interface NotificationSetting {
   id: string;
@@ -25,15 +26,17 @@ interface NotificationSetting {
 
 export default function NotificationSettingsScreen() {
   const router = useRouter();
+  const { data: preferences, isLoading } = useNotificationPreferences();
+  const updatePreferences = useUpdateNotificationPreferences();
 
-  const [settings, setSettings] = React.useState<NotificationSetting[]>([
+  const settingsConfig: NotificationSetting[] = [
     {
       id: 'flight_updates',
       title: 'Flight Updates',
       description: 'Gate changes, delays, and cancellations',
       icon: <Plane size={20} color="#3B82F6" />,
       iconColor: '#3B82F6',
-      enabled: true,
+      enabled: preferences?.flight_updates ?? true,
     },
     {
       id: 'departure_reminders',
@@ -41,7 +44,7 @@ export default function NotificationSettingsScreen() {
       description: 'Remind me when to leave for the airport',
       icon: <Clock size={20} color="#10B981" />,
       iconColor: '#10B981',
-      enabled: true,
+      enabled: preferences?.departure_reminders ?? true,
     },
     {
       id: 'checkin_alerts',
@@ -49,7 +52,7 @@ export default function NotificationSettingsScreen() {
       description: 'Notify when online check-in opens',
       icon: <Bell size={20} color="#F59E0B" />,
       iconColor: '#F59E0B',
-      enabled: true,
+      enabled: preferences?.checkin_alerts ?? true,
     },
     {
       id: 'trip_changes',
@@ -57,7 +60,7 @@ export default function NotificationSettingsScreen() {
       description: 'Updates when reservations are modified',
       icon: <AlertCircle size={20} color="#EF4444" />,
       iconColor: '#EF4444',
-      enabled: true,
+      enabled: preferences?.trip_changes ?? true,
     },
     {
       id: 'email_confirmations',
@@ -65,17 +68,22 @@ export default function NotificationSettingsScreen() {
       description: 'Confirm when trips are added via email',
       icon: <Mail size={20} color="#8B5CF6" />,
       iconColor: '#8B5CF6',
-      enabled: false,
+      enabled: preferences?.email_confirmations ?? false,
     },
-  ]);
+  ];
 
-  const toggleSetting = (id: string) => {
+  const toggleSetting = async (id: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSettings(prev =>
-      prev.map(s =>
-        s.id === id ? { ...s, enabled: !s.enabled } : s
-      )
-    );
+    
+    const currentValue = preferences?.[id as keyof typeof preferences] ?? false;
+    
+    try {
+      await updatePreferences.mutateAsync({
+        [id]: !currentValue,
+      });
+    } catch (error) {
+      console.error('Failed to update notification preference:', error);
+    }
   };
 
   return (
@@ -108,34 +116,41 @@ export default function NotificationSettingsScreen() {
               Choose which notifications you'd like to receive
             </Text>
 
-            <View className="bg-slate-800/50 rounded-2xl border border-slate-700/50 overflow-hidden">
-              {settings.map((setting, index) => (
-                <View
-                  key={setting.id}
-                  className={`flex-row items-center p-4 ${
-                    index < settings.length - 1 ? 'border-b border-slate-700/30' : ''
-                  }`}
-                >
-                  <View style={{ backgroundColor: setting.iconColor + '20', padding: 10, borderRadius: 12 }}>
-                    {setting.icon}
+            {isLoading ? (
+              <View className="bg-slate-800/50 rounded-2xl border border-slate-700/50 p-8 items-center">
+                <ActivityIndicator size="large" color="#3B82F6" />
+              </View>
+            ) : (
+              <View className="bg-slate-800/50 rounded-2xl border border-slate-700/50 overflow-hidden">
+                {settingsConfig.map((setting, index) => (
+                  <View
+                    key={setting.id}
+                    className={`flex-row items-center p-4 ${
+                      index < settingsConfig.length - 1 ? 'border-b border-slate-700/30' : ''
+                    }`}
+                  >
+                    <View style={{ backgroundColor: setting.iconColor + '20', padding: 10, borderRadius: 12 }}>
+                      {setting.icon}
+                    </View>
+                    <View className="flex-1 ml-3">
+                      <Text className="text-white font-medium" style={{ fontFamily: 'DMSans_500Medium' }}>
+                        {setting.title}
+                      </Text>
+                      <Text className="text-slate-500 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                        {setting.description}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={setting.enabled}
+                      onValueChange={() => toggleSetting(setting.id)}
+                      trackColor={{ false: '#334155', true: '#3B82F6' }}
+                      thumbColor={setting.enabled ? '#FFFFFF' : '#94A3B8'}
+                      disabled={updatePreferences.isPending}
+                    />
                   </View>
-                  <View className="flex-1 ml-3">
-                    <Text className="text-white font-medium" style={{ fontFamily: 'DMSans_500Medium' }}>
-                      {setting.title}
-                    </Text>
-                    <Text className="text-slate-500 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                      {setting.description}
-                    </Text>
-                  </View>
-                  <Switch
-                    value={setting.enabled}
-                    onValueChange={() => toggleSetting(setting.id)}
-                    trackColor={{ false: '#334155', true: '#3B82F6' }}
-                    thumbColor={setting.enabled ? '#FFFFFF' : '#94A3B8'}
-                  />
-                </View>
-              ))}
-            </View>
+                ))}
+              </View>
+            )}
           </Animated.View>
 
           {/* Info Card */}

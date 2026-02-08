@@ -24,8 +24,10 @@ import {
   useDeleteConnectedAccount,
   useSyncGmail,
 } from '@/lib/hooks/useConnectedAccounts';
+import { useForwardingAddress } from '@/lib/hooks/useProfile';
 import { useGoogleAuthRequest, exchangeCodeForTokens } from '@/lib/google-auth';
 import { ResponseType } from 'expo-auth-session';
+import * as Clipboard from 'expo-clipboard';
 
 const providerInfo = {
   gmail: {
@@ -53,7 +55,9 @@ export default function ConnectedAccountsScreen() {
   const syncGmail = useSyncGmail();
 
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
+  const [copiedAddress, setCopiedAddress] = React.useState(false);
   const { canConnectGmail } = useSubscription();
+  const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
 
   // Google OAuth
   const { request, response, promptAsync, redirectUri } = useGoogleAuthRequest();
@@ -380,23 +384,69 @@ export default function ConnectedAccountsScreen() {
             entering={FadeInDown.duration(500).delay(300)}
             className="mt-6"
           >
-            <Pressable
-              onPress={() => router.push('/trusted-emails')}
-              className="bg-slate-800/30 rounded-2xl p-4 flex-row items-center border border-slate-700/30"
-            >
-              <View className="bg-slate-700/50 p-3 rounded-xl">
-                <Mail size={20} color="#64748B" />
+            <View className="bg-slate-800/30 rounded-2xl p-5 border border-slate-700/30">
+              <View className="flex-row items-center mb-4">
+                <View className="bg-slate-700/50 p-3 rounded-xl">
+                  <Mail size={20} color="#64748B" />
+                </View>
+                <View className="flex-1 ml-3">
+                  <Text className="text-slate-300 font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    Prefer manual forwarding?
+                  </Text>
+                  <Text className="text-slate-500 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    Forward emails to your unique address
+                  </Text>
+                </View>
               </View>
-              <View className="flex-1 ml-3">
-                <Text className="text-slate-300 font-medium" style={{ fontFamily: 'DMSans_500Medium' }}>
-                  Prefer manual forwarding?
-                </Text>
-                <Text className="text-slate-500 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
-                  Manage trusted email addresses
-                </Text>
-              </View>
-              <ChevronRight size={18} color="#64748B" />
-            </Pressable>
+
+              {loadingAddress ? (
+                <View className="bg-slate-700/30 rounded-xl p-4">
+                  <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    Loading your address...
+                  </Text>
+                </View>
+              ) : forwardingAddress ? (
+                <>
+                  <Pressable
+                    onPress={async () => {
+                      await Clipboard.setStringAsync(forwardingAddress);
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                      setCopiedAddress(true);
+                      setTimeout(() => setCopiedAddress(false), 2000);
+                    }}
+                    className="bg-slate-700/50 rounded-xl p-4 mb-3"
+                  >
+                    <Text className="text-slate-400 text-xs mb-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Your forwarding address
+                    </Text>
+                    <View className="flex-row items-center justify-between">
+                      <Text className="text-white text-sm font-mono flex-1" style={{ fontFamily: 'SpaceMono_700Bold' }} numberOfLines={1}>
+                        {forwardingAddress}
+                      </Text>
+                      {copiedAddress ? (
+                        <Check size={18} color="#10B981" />
+                      ) : (
+                        <Text className="text-blue-400 text-xs ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          Tap to copy
+                        </Text>
+                      )}
+                    </View>
+                  </Pressable>
+
+                  <View className="bg-slate-700/20 rounded-xl p-3">
+                    <Text className="text-slate-400 text-xs leading-5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Forward your travel confirmation emails (flights, hotels, cars) to this address and we'll automatically create trips for you.
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <View className="bg-slate-700/30 rounded-xl p-4">
+                  <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    Unable to load forwarding address
+                  </Text>
+                </View>
+              )}
+            </View>
           </Animated.View>
 
           <View className="h-8" />

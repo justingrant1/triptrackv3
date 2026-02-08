@@ -31,7 +31,8 @@ export type UpgradeReason =
   | 'receipt-limit'
   | 'csv-export'
   | 'email-parsing'
-  | 'gmail-connect';
+  | 'gmail-connect'
+  | 'email-receipts';
 
 interface UpgradeModalProps {
   visible: boolean;
@@ -88,6 +89,12 @@ const REASON_CONFIG: Record<
     title: 'Gmail Auto-Scan',
     description: 'Connect your Gmail and automatically import all your travel bookings. No forwarding needed.',
     icon: <Zap size={32} color="#8B5CF6" />,
+    color: '#8B5CF6',
+  },
+  'email-receipts': {
+    title: 'Email Receipt Scanner',
+    description: 'Automatically find and import travel receipts from your Gmail — hotel invoices, flight charges, rental receipts, and more.',
+    icon: <Mail size={32} color="#8B5CF6" />,
     color: '#8B5CF6',
   },
 };

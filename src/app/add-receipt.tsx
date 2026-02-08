@@ -17,7 +17,7 @@ import {
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useTrips } from '@/lib/hooks/useTrips';
 import { useCreateReceipt } from '@/lib/hooks/useReceipts';
 import { supabase } from '@/lib/supabase';
@@ -130,10 +130,13 @@ export default function AddReceiptScreen() {
       mediaTypes: 'images',
       allowsEditing: true,
       quality: 0.8,
+      base64: false, // We'll read it manually for better control
     });
 
-    if (!result.canceled && result.assets[0]) {
+    if (!result.canceled && result.assets && result.assets[0] && result.assets[0].uri) {
       await processReceiptImage(result.assets[0].uri);
+    } else {
+      console.log('Camera cancelled or no image selected');
     }
   };
 
@@ -141,10 +144,18 @@ export default function AddReceiptScreen() {
     setIsScanning(true);
 
     try {
-      // Read the image as base64
+      console.log('Processing image from URI:', uri);
+
+      // Read the image as base64 (no need to check if exists, readAsStringAsync will throw if it doesn't)
       const base64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: 'base64',
       });
+
+      if (!base64) {
+        throw new Error('Failed to read image data');
+      }
+
+      console.log('Base64 data length:', base64.length);
 
       // Create base64 data URI for OpenAI
       const base64DataUri = `data:image/jpeg;base64,${base64}`;

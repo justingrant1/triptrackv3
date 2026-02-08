@@ -2,3 +2,6 @@ project_id = "jucngvlcnxjyvjxydmco"
 
 [functions.parse-travel-email]
 verify_jwt = false
+
+[functions.scan-gmail]
+verify_jwt = false

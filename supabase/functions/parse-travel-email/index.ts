@@ -154,48 +154,67 @@ serve(async (req) => {
       throw new Error('Unsupported content type');
     }
 
-    let senderEmail = emailData.from || emailData.sender || '';
+    const recipientEmail = emailData.to || emailData.recipient || '';
     const emailText = emailData.text || emailData.html || '';
 
-    if (!senderEmail || !emailText) {
-      throw new Error('Missing sender or email content');
+    if (!recipientEmail || !emailText) {
+      throw new Error('Missing recipient or email content');
     }
 
-    // Extract pure email if formatted like "Name <email@example.com>"
-    const emailMatch = senderEmail.match(/<(.+?)>/);
-    if (emailMatch) {
-      senderEmail = emailMatch[1];
+    console.log('Processing email to:', recipientEmail);
+
+    // Extract forwarding token from recipient address
+    // Format: plans+TOKEN@triptrack.ai or TOKEN@triptrack.ai
+    let forwardingToken = '';
+    
+    // Try to extract from plus-addressing: plans+abc123@triptrack.ai
+    const plusMatch = recipientEmail.match(/\+([^@]+)@/);
+    if (plusMatch) {
+      forwardingToken = plusMatch[1];
+    } else {
+      // Try to extract from subdomain or direct address: abc123@triptrack.ai
+      const atMatch = recipientEmail.match(/^([^@]+)@/);
+      if (atMatch && atMatch[1] !== 'plans') {
+        forwardingToken = atMatch[1];
+      }
     }
 
-    // Normalize sender email
-    senderEmail = senderEmail.trim().toLowerCase();
+    if (!forwardingToken) {
+      console.log('No forwarding token found in recipient:', recipientEmail);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid forwarding address',
+          recipient: recipientEmail,
+          message: 'Please use your unique forwarding address from the app'
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
-    console.log('Processing email from:', senderEmail);
+    console.log('Forwarding token:', forwardingToken);
 
     // Initialize Supabase client with service role key
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // Look up the sender in trusted_emails to find which user account to use
-    const { data: trustedEmail, error: trustedError } = await supabase
-      .from('trusted_emails')
-      .select('user_id, verified')
-      .eq('email', senderEmail)
-      .eq('verified', true)
+    // Look up user by forwarding token
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('forwarding_token', forwardingToken)
       .single();
 
-    if (trustedError || !trustedEmail) {
-      console.log('Email from untrusted sender:', senderEmail);
+    if (profileError || !profile) {
+      console.log('Invalid forwarding token:', forwardingToken);
       return new Response(
         JSON.stringify({ 
-          error: 'Email from untrusted sender',
-          sender: senderEmail,
-          message: 'Please add this email to your trusted emails list in the app'
+          error: 'Invalid forwarding token',
+          message: 'This forwarding address is not recognized. Please check your unique address in the app.'
         }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const userId = trustedEmail.user_id;
+    const userId = profile.id;
     console.log('Processing for user:', userId);
 
     // 2. Parse email with AI
@@ -250,13 +269,13 @@ serve(async (req) => {
     console.log(`Created ${reservations.length} reservations`);
 
     // 5. Send push notification (if user has push token)
-    const { data: profile } = await supabase
+    const { data: userProfile } = await supabase
       .from('profiles')
       .select('push_token')
       .eq('id', userId)
       .single();
 
-    if (profile?.push_token) {
+    if (userProfile?.push_token) {
       // Send Expo push notification
       await fetch('https://exp.host/--/api/v2/push/send', {
         method: 'POST',
@@ -264,7 +283,7 @@ serve(async (req) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          to: profile.push_token,
+          to: userProfile.push_token,
           title: '✈️ New Trip Added!',
           body: `${parsed.trip_name} has been added with ${reservations.length} reservation(s).`,
           data: { tripId: trip.id },

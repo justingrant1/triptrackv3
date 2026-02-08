@@ -7,6 +7,7 @@ export interface Profile {
   name: string | null;
   email: string | null;
   forwarding_email: string | null;
+  forwarding_token: string | null;
   avatar_url: string | null;
   plan: 'free' | 'pro' | 'team';
   created_at: string;
@@ -62,6 +63,33 @@ export function useUpdateProfile() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profile', user?.id] });
     },
+  });
+}
+
+// Get user's unique forwarding address
+export function useForwardingAddress() {
+  const { user } = useAuthStore();
+  
+  return useQuery({
+    queryKey: ['forwarding-address', user?.id],
+    queryFn: async () => {
+      if (!user) throw new Error('Not authenticated');
+      
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('forwarding_token')
+        .eq('id', user.id)
+        .single();
+      
+      if (error) throw error;
+      
+      if (!data.forwarding_token) {
+        throw new Error('Forwarding token not found. Please contact support.');
+      }
+      
+      return `plans+${data.forwarding_token}@triptrack.ai`;
+    },
+    enabled: !!user,
   });
 }
 

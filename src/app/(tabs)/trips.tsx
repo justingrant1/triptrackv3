@@ -22,6 +22,8 @@ import Animated, {
   FadeInDown,
   FadeInRight,
   FadeOut,
+  interpolate,
+  Extrapolation,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -32,6 +34,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { useTrips, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservationCounts } from '@/lib/hooks/useReservations';
+import { useConnectedAccounts, useSyncGmail } from '@/lib/hooks/useConnectedAccounts';
 import type { Trip } from '@/lib/types/database';
 import { formatDateRange, getDaysUntil } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
@@ -127,12 +130,19 @@ function CompactTripCardSkeleton({ index }: { index: number }) {
   );
 }
 
+// Shared spring configs for buttery-smooth iOS feel
+const SNAP_SPRING = { damping: 22, stiffness: 220, mass: 0.8 };
+const CLOSE_SPRING = { damping: 26, stiffness: 300, mass: 0.7 };
+const ACTION_SNAP_POINT = -148; // Width of action buttons area
+
 function TripCard({ trip, index }: { trip: Trip; index: number }) {
   const router = useRouter();
   const deleteTrip = useDeleteTrip();
   const { data: reservationCounts } = useReservationCounts(trip.id);
   const scale = useSharedValue(1);
   const translateX = useSharedValue(0);
+  const contextX = useSharedValue(0);
+  const hasTriggeredHaptic = useSharedValue(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -142,22 +152,58 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
     ],
   }));
 
-  const actionButtonsStyle = useAnimatedStyle(() => ({
-    opacity: translateX.value < -20 ? 1 : 0,
-  }));
+  // Smooth interpolated reveal for action buttons
+  const actionButtonsStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(
+      translateX.value,
+      [0, -40, -80],
+      [0, 0.5, 1],
+      Extrapolation.CLAMP
+    );
+    const buttonScale = interpolate(
+      translateX.value,
+      [0, -60, ACTION_SNAP_POINT],
+      [0.6, 0.85, 1],
+      Extrapolation.CLAMP
+    );
+    return {
+      opacity,
+      transform: [{ scale: buttonScale }],
+    };
+  });
+
+  // Individual button animations for staggered reveal
+  const editButtonStyle = useAnimatedStyle(() => {
+    const buttonTranslateX = interpolate(
+      translateX.value,
+      [0, -80, ACTION_SNAP_POINT],
+      [40, 10, 0],
+      Extrapolation.CLAMP
+    );
+    return { transform: [{ translateX: buttonTranslateX }] };
+  });
+
+  const deleteButtonStyle = useAnimatedStyle(() => {
+    const buttonTranslateX = interpolate(
+      translateX.value,
+      [0, -100, ACTION_SNAP_POINT],
+      [60, 15, 0],
+      Extrapolation.CLAMP
+    );
+    return { transform: [{ translateX: buttonTranslateX }] };
+  });
 
   const handlePressIn = () => {
-    scale.value = withSpring(0.98);
+    scale.value = withSpring(0.98, { damping: 15, stiffness: 200 });
   };
 
   const handlePressOut = () => {
-    scale.value = withSpring(1);
+    scale.value = withSpring(1, { damping: 15, stiffness: 200 });
   };
 
   const handlePress = () => {
     if (translateX.value < -10) {
-      // If swiped, reset instead of navigating
-      translateX.value = withSpring(0);
+      translateX.value = withSpring(0, CLOSE_SPRING);
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -166,13 +212,13 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
 
   const handleEdit = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    translateX.value = withSpring(0);
+    translateX.value = withSpring(0, CLOSE_SPRING);
     router.push(`/edit-trip?id=${trip.id}`);
   };
 
   const handleDelete = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    translateX.value = withSpring(0);
+    translateX.value = withSpring(0, CLOSE_SPRING);
     
     Alert.alert(
       'Delete Trip',
@@ -203,21 +249,49 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
   };
 
   const panGesture = Gesture.Pan()
-    .activeOffsetX([-10, 10])
+    .activeOffsetX([-8, 8])
+    .failOffsetY([-12, 12])
+    .onBegin(() => {
+      contextX.value = translateX.value;
+      hasTriggeredHaptic.value = false;
+    })
     .onUpdate((event) => {
-      // Only allow left swipe
-      if (event.translationX < 0) {
-        translateX.value = Math.max(event.translationX, -140);
+      const newX = contextX.value + event.translationX;
+      
+      // Clamp: no right-past-zero, rubber-band past snap point
+      if (newX > 0) {
+        // Rubber band right (resistance when trying to go past 0)
+        translateX.value = newX * 0.15;
+      } else if (newX < ACTION_SNAP_POINT) {
+        // Rubber band left past snap point
+        const overshoot = newX - ACTION_SNAP_POINT;
+        translateX.value = ACTION_SNAP_POINT + overshoot * 0.2;
+      } else {
+        translateX.value = newX;
+      }
+
+      // Haptic feedback when crossing the snap threshold
+      if (translateX.value < ACTION_SNAP_POINT * 0.5 && !hasTriggeredHaptic.value) {
+        hasTriggeredHaptic.value = true;
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
       }
     })
-    .onEnd(() => {
-      if (translateX.value < -40) {
-        // Snap to open (reduced threshold from -70 to -40)
-        translateX.value = withSpring(-140);
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+    .onEnd((event) => {
+      // Velocity-based: fast swipe left opens, fast swipe right closes
+      if (event.velocityX < -500) {
+        translateX.value = withSpring(ACTION_SNAP_POINT, SNAP_SPRING);
+        return;
+      }
+      if (event.velocityX > 500) {
+        translateX.value = withSpring(0, CLOSE_SPRING);
+        return;
+      }
+
+      // Position-based: past halfway = snap open, otherwise close
+      if (translateX.value < ACTION_SNAP_POINT * 0.45) {
+        translateX.value = withSpring(ACTION_SNAP_POINT, SNAP_SPRING);
       } else {
-        // Snap to closed
-        translateX.value = withSpring(0);
+        translateX.value = withSpring(0, CLOSE_SPRING);
       }
     });
 
@@ -268,23 +342,29 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
 
   return (
     <Animated.View entering={FadeInDown.duration(500).delay(index * 100)} className="mb-4">
-      {/* Action Buttons Background */}
+      {/* Action Buttons — staggered reveal */}
       <Animated.View 
         style={[actionButtonsStyle]}
-        className="absolute right-0 top-0 bottom-0 flex-row items-center gap-2 pr-5"
+        className="absolute right-0 top-0 bottom-0 flex-row items-center gap-3 pr-4"
       >
-        <Pressable
-          onPress={handleEdit}
-          className="bg-blue-500 w-16 h-16 rounded-2xl items-center justify-center"
-        >
-          <Edit3 size={24} color="#FFFFFF" />
-        </Pressable>
-        <Pressable
-          onPress={handleDelete}
-          className="bg-red-500 w-16 h-16 rounded-2xl items-center justify-center"
-        >
-          <Trash2 size={24} color="#FFFFFF" />
-        </Pressable>
+        <Animated.View style={editButtonStyle}>
+          <Pressable
+            onPress={handleEdit}
+            className="bg-blue-500 w-16 h-16 rounded-2xl items-center justify-center"
+            style={{ shadowColor: '#3B82F6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 }}
+          >
+            <Edit3 size={22} color="#FFFFFF" />
+          </Pressable>
+        </Animated.View>
+        <Animated.View style={deleteButtonStyle}>
+          <Pressable
+            onPress={handleDelete}
+            className="bg-red-500 w-16 h-16 rounded-2xl items-center justify-center"
+            style={{ shadowColor: '#EF4444', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 }}
+          >
+            <Trash2 size={22} color="#FFFFFF" />
+          </Pressable>
+        </Animated.View>
       </Animated.View>
 
       {/* Swipeable Card */}
@@ -381,23 +461,63 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
   );
 }
 
+const COMPACT_SNAP_POINT = -128; // Slightly smaller for compact cards
+
 function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
   const router = useRouter();
   const deleteTrip = useDeleteTrip();
   const translateX = useSharedValue(0);
+  const contextX = useSharedValue(0);
+  const hasTriggeredHaptic = useSharedValue(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
   }));
 
-  const actionButtonsStyle = useAnimatedStyle(() => ({
-    opacity: translateX.value < -20 ? 1 : 0,
-  }));
+  // Smooth interpolated reveal
+  const actionButtonsStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(
+      translateX.value,
+      [0, -30, -70],
+      [0, 0.4, 1],
+      Extrapolation.CLAMP
+    );
+    const buttonScale = interpolate(
+      translateX.value,
+      [0, -50, COMPACT_SNAP_POINT],
+      [0.5, 0.8, 1],
+      Extrapolation.CLAMP
+    );
+    return {
+      opacity,
+      transform: [{ scale: buttonScale }],
+    };
+  });
+
+  const editButtonStyle = useAnimatedStyle(() => {
+    const x = interpolate(
+      translateX.value,
+      [0, -70, COMPACT_SNAP_POINT],
+      [30, 8, 0],
+      Extrapolation.CLAMP
+    );
+    return { transform: [{ translateX: x }] };
+  });
+
+  const deleteButtonStyle = useAnimatedStyle(() => {
+    const x = interpolate(
+      translateX.value,
+      [0, -90, COMPACT_SNAP_POINT],
+      [50, 12, 0],
+      Extrapolation.CLAMP
+    );
+    return { transform: [{ translateX: x }] };
+  });
 
   const handlePress = () => {
     if (translateX.value < -10) {
-      translateX.value = withSpring(0);
+      translateX.value = withSpring(0, CLOSE_SPRING);
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -406,13 +526,13 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
 
   const handleEdit = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    translateX.value = withSpring(0);
+    translateX.value = withSpring(0, CLOSE_SPRING);
     router.push(`/edit-trip?id=${trip.id}`);
   };
 
   const handleDelete = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    translateX.value = withSpring(0);
+    translateX.value = withSpring(0, CLOSE_SPRING);
     
     Alert.alert(
       'Delete Trip',
@@ -442,19 +562,43 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
   };
 
   const panGesture = Gesture.Pan()
-    .activeOffsetX([-10, 10])
+    .activeOffsetX([-8, 8])
+    .failOffsetY([-12, 12])
+    .onBegin(() => {
+      contextX.value = translateX.value;
+      hasTriggeredHaptic.value = false;
+    })
     .onUpdate((event) => {
-      if (event.translationX < 0) {
-        translateX.value = Math.max(event.translationX, -140);
+      const newX = contextX.value + event.translationX;
+      
+      if (newX > 0) {
+        translateX.value = newX * 0.15;
+      } else if (newX < COMPACT_SNAP_POINT) {
+        const overshoot = newX - COMPACT_SNAP_POINT;
+        translateX.value = COMPACT_SNAP_POINT + overshoot * 0.2;
+      } else {
+        translateX.value = newX;
+      }
+
+      if (translateX.value < COMPACT_SNAP_POINT * 0.5 && !hasTriggeredHaptic.value) {
+        hasTriggeredHaptic.value = true;
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
       }
     })
-    .onEnd(() => {
-      if (translateX.value < -40) {
-        // Snap to open (reduced threshold from -70 to -40)
-        translateX.value = withSpring(-140);
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+    .onEnd((event) => {
+      if (event.velocityX < -500) {
+        translateX.value = withSpring(COMPACT_SNAP_POINT, SNAP_SPRING);
+        return;
+      }
+      if (event.velocityX > 500) {
+        translateX.value = withSpring(0, CLOSE_SPRING);
+        return;
+      }
+
+      if (translateX.value < COMPACT_SNAP_POINT * 0.45) {
+        translateX.value = withSpring(COMPACT_SNAP_POINT, SNAP_SPRING);
       } else {
-        translateX.value = withSpring(0);
+        translateX.value = withSpring(0, CLOSE_SPRING);
       }
     });
 
@@ -472,23 +616,29 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
 
   return (
     <Animated.View entering={FadeInRight.duration(400).delay(index * 80)} className="mb-3">
-      {/* Action Buttons Background */}
+      {/* Action Buttons — staggered reveal */}
       <Animated.View 
         style={[actionButtonsStyle]}
-        className="absolute right-0 top-0 bottom-0 flex-row items-center gap-2 pr-5"
+        className="absolute right-0 top-0 bottom-0 flex-row items-center gap-2 pr-3"
       >
-        <Pressable
-          onPress={handleEdit}
-          className="bg-blue-500 w-12 h-12 rounded-xl items-center justify-center"
-        >
-          <Edit3 size={18} color="#FFFFFF" />
-        </Pressable>
-        <Pressable
-          onPress={handleDelete}
-          className="bg-red-500 w-12 h-12 rounded-xl items-center justify-center"
-        >
-          <Trash2 size={18} color="#FFFFFF" />
-        </Pressable>
+        <Animated.View style={editButtonStyle}>
+          <Pressable
+            onPress={handleEdit}
+            className="bg-blue-500 w-12 h-12 rounded-xl items-center justify-center"
+            style={{ shadowColor: '#3B82F6', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6, elevation: 4 }}
+          >
+            <Edit3 size={18} color="#FFFFFF" />
+          </Pressable>
+        </Animated.View>
+        <Animated.View style={deleteButtonStyle}>
+          <Pressable
+            onPress={handleDelete}
+            className="bg-red-500 w-12 h-12 rounded-xl items-center justify-center"
+            style={{ shadowColor: '#EF4444', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6, elevation: 4 }}
+          >
+            <Trash2 size={18} color="#FFFFFF" />
+          </Pressable>
+        </Animated.View>
       </Animated.View>
 
       {/* Swipeable Card */}
@@ -498,22 +648,22 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
             onPress={handlePress}
             className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
           >
-        <Image
-          source={{ uri: trip.cover_image ?? 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=200' }}
-          className="w-14 h-14 rounded-xl"
-          resizeMode="cover"
-        />
-        <View className="flex-1 ml-3">
-          <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-            {trip.name}
-          </Text>
-          <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {trip.destination}
-          </Text>
-          <Text className="text-slate-500 text-xs mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-            {formatDateRange(new Date(trip.start_date), new Date(trip.end_date))}
-          </Text>
-        </View>
+            <Image
+              source={{ uri: trip.cover_image ?? 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=200' }}
+              className="w-14 h-14 rounded-xl"
+              resizeMode="cover"
+            />
+            <View className="flex-1 ml-3">
+              <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                {trip.name}
+              </Text>
+              <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                {trip.destination}
+              </Text>
+              <Text className="text-slate-500 text-xs mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                {formatDateRange(new Date(trip.start_date), new Date(trip.end_date))}
+              </Text>
+            </View>
             <ChevronRight size={18} color="#64748B" />
           </Pressable>
         </Animated.View>
@@ -522,13 +672,53 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
   );
 }
 
+// Auto-sync interval: 1 hour
+const AUTO_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+
 export default function TripsScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const { data: trips = [], isLoading, error, refetch } = useTrips();
+  const { data: connectedAccounts } = useConnectedAccounts();
+  const syncGmail = useSyncGmail();
   const [refreshing, setRefreshing] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [showSearch, setShowSearch] = React.useState(false);
+  const hasAutoSynced = React.useRef(false);
+
+  // Auto-sync Gmail when screen loads (if connected and stale)
+  React.useEffect(() => {
+    if (hasAutoSynced.current) return;
+    if (!connectedAccounts || connectedAccounts.length === 0) return;
+    if (syncGmail.isPending) return;
+
+    const gmailAccount = connectedAccounts.find(a => a.provider === 'gmail');
+    if (!gmailAccount) return;
+
+    // Check if last sync was more than 1 hour ago
+    const lastSync = gmailAccount.last_sync ? new Date(gmailAccount.last_sync).getTime() : 0;
+    const now = Date.now();
+    
+    if (now - lastSync > AUTO_SYNC_INTERVAL_MS) {
+      hasAutoSynced.current = true;
+      console.log('Auto-syncing Gmail (last sync:', gmailAccount.last_sync || 'never', ')');
+      
+      // Silent background sync — no UI feedback unless it finds new trips
+      syncGmail.mutate(gmailAccount.id, {
+        onSuccess: (data: any) => {
+          if (data?.summary?.tripsCreated > 0 || data?.summary?.reservationsCreated > 0) {
+            console.log('Auto-sync found new trips:', data.summary);
+            // Refetch trips to show new ones
+            refetch();
+          }
+        },
+        onError: (err: any) => {
+          // Silent failure — don't bother the user
+          console.warn('Auto-sync failed:', err.message);
+        },
+      });
+    }
+  }, [connectedAccounts]);
 
   // Filter trips based on search query
   const filteredTrips = React.useMemo(() => {
@@ -545,7 +735,16 @@ export default function TripsScreen() {
   const upcomingTrips = filteredTrips.filter((t) => t.status === 'upcoming');
   const pastTrips = filteredTrips.filter((t) => t.status === 'completed');
 
-  const featuredTrips = [...activeTrips, ...upcomingTrips];
+  // Featured trips: active first, then upcoming — sorted soonest first (ascending)
+  const featuredTrips = [...activeTrips, ...upcomingTrips].sort(
+    (a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
+  );
+
+  // Past trips: most recent first (descending) — already in correct order from useTrips()
+  // but explicitly sort to be safe after filtering
+  const sortedPastTrips = pastTrips.sort(
+    (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
+  );
 
   const handleAddTrip = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -558,6 +757,21 @@ export default function TripsScreen() {
     // Update trip statuses first
     if (user?.id) {
       await updateTripStatuses(user.id);
+    }
+    
+    // Trigger Gmail sync on pull-to-refresh (respects 5-min rate limit)
+    if (connectedAccounts && connectedAccounts.length > 0) {
+      const gmailAccount = connectedAccounts.find(a => a.provider === 'gmail');
+      if (gmailAccount && !syncGmail.isPending) {
+        try {
+          await syncGmail.mutateAsync(gmailAccount.id);
+        } catch (err: any) {
+          // Silently handle rate limit errors — just means we synced recently
+          if (!err.message?.includes('wait')) {
+            console.warn('Pull-to-refresh sync failed:', err.message);
+          }
+        }
+      }
     }
     
     // Then refetch to get updated data
@@ -595,7 +809,7 @@ export default function TripsScreen() {
                   Your Trips
                 </Text>
                 <Text className="text-slate-400 text-sm mt-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-                  {featuredTrips.length} upcoming · {pastTrips.length} completed
+                  {featuredTrips.length} upcoming · {sortedPastTrips.length} completed
                 </Text>
               </View>
               <View className="flex-row gap-2">
@@ -724,12 +938,12 @@ export default function TripsScreen() {
           )}
 
           {/* Past Trips */}
-          {!isLoading && !error && pastTrips.length > 0 && (
+          {!isLoading && !error && sortedPastTrips.length > 0 && (
             <View className="mt-8 px-5 pb-8">
               <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                 Past Trips
               </Text>
-              {pastTrips.map((trip, index) => (
+              {sortedPastTrips.map((trip, index) => (
                 <CompactTripCard key={trip.id} trip={trip} index={index} />
               ))}
             </View>

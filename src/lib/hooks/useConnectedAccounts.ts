@@ -196,17 +196,10 @@ export function useSyncGmail() {
         }
       }
 
-      // Get the current session token
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No active session');
-
-      // Call the Supabase Edge Function
+      // Call the Supabase Edge Function (auth is handled automatically by the client)
       const { data, error } = await supabase.functions.invoke('scan-gmail', {
         body: {
           accountId,
-        },
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
         },
       });
 
@@ -226,6 +219,40 @@ export function useSyncGmail() {
       queryClient.invalidateQueries({ queryKey: ['connected-account', accountId] });
       // Also invalidate trips since new ones may have been created
       queryClient.invalidateQueries({ queryKey: ['trips', user?.id] });
+    },
+  });
+}
+
+/**
+ * Trigger a Gmail receipt scan for a connected account.
+ * Calls the same scan-gmail edge function with mode: 'receipts'.
+ * Scans last 30 days for travel-related receipts (hotel invoices,
+ * flight charges, rental receipts) and auto-assigns to matching trips.
+ */
+export function useScanEmailReceipts() {
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+
+  return useMutation({
+    mutationFn: async (accountId: string) => {
+      if (!user?.id) throw new Error('User not authenticated');
+
+      // Call the Supabase Edge Function with receipt mode
+      const { data, error } = await supabase.functions.invoke('scan-gmail', {
+        body: {
+          accountId,
+          mode: 'receipts',
+        },
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['connected-accounts', user?.id] });
+      // Invalidate receipts since new ones may have been created
+      queryClient.invalidateQueries({ queryKey: ['all-receipts'] });
+      queryClient.invalidateQueries({ queryKey: ['receipts'] });
     },
   });
 }

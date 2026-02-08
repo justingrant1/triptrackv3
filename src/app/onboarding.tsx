@@ -43,8 +43,8 @@ const slides: OnboardingSlide[] = [
     icon: Mail,
     iconColor: '#8B5CF6',
     iconBg: '#8B5CF620',
-    title: 'Forward & Forget',
-    description: 'Simply forward your travel confirmation emails. Our AI extracts all the details automatically.',
+    title: 'Connect Gmail or Forward Emails',
+    description: 'Connect your Gmail account for automatic scanning, or simply forward travel confirmations to your unique address. Our AI extracts all the details automatically.',
     gradient: ['#8B5CF6', '#7C3AED'],
   },
   {
@@ -263,13 +263,15 @@ export default function OnboardingScreen() {
           <Animated.View entering={FadeInUp.duration(500).delay(200)}>
             <Pressable
               onPress={handleNext}
-              className="rounded-2xl overflow-hidden"
+              className="rounded-2xl overflow-hidden shadow-lg"
+              style={{ elevation: 5 }}
             >
               <LinearGradient
                 colors={slides[currentIndex].gradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                className="py-4 px-8 flex-row items-center justify-center"
+                style={{ paddingVertical: 18, paddingHorizontal: 32 }}
+                className="flex-row items-center justify-center"
               >
                 <Text
                   className="text-white text-lg font-bold mr-2"

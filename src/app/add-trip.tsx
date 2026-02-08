@@ -31,8 +31,10 @@ import * as Haptics from 'expo-haptics';
 import { useCreateTrip } from '@/lib/hooks/useTrips';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useForwardingAddress } from '@/lib/hooks/useProfile';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import * as Clipboard from 'expo-clipboard';
 
 const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?w=800', // NYC
@@ -58,6 +60,7 @@ export default function AddTripScreen() {
   const createTrip = useCreateTrip();
   const { user } = useAuthStore();
   const { canCreateTrip } = useSubscription();
+  const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
 
   const [tripName, setTripName] = React.useState('');
   const [destination, setDestination] = React.useState('');
@@ -401,7 +404,7 @@ export default function AddTripScreen() {
               </Text>
             </Animated.View>
 
-            {/* Info Box */}
+            {/* Forwarding Address Box */}
             <Animated.View entering={FadeInDown.duration(400).delay(200)}>
               <View className="bg-blue-500/10 rounded-2xl p-4 mt-6 border border-blue-500/20">
                 <View className="flex-row items-start">
@@ -411,14 +414,39 @@ export default function AddTripScreen() {
                       className="text-blue-400 font-semibold"
                       style={{ fontFamily: 'DMSans_700Bold' }}
                     >
-                      Pro Tip
+                      Auto-Add Trips via Email
                     </Text>
                     <Text
                       className="text-slate-400 text-sm mt-1"
                       style={{ fontFamily: 'DMSans_400Regular' }}
                     >
-                      After creating your trip, forward your confirmation emails to automatically add flights, hotels, and more.
+                      Forward your travel confirmation emails to:
                     </Text>
+                    {loadingAddress ? (
+                      <View className="bg-slate-800/60 rounded-xl px-3 py-2 mt-2">
+                        <ActivityIndicator size="small" color="#3B82F6" />
+                      </View>
+                    ) : forwardingAddress ? (
+                      <Pressable
+                        onPress={async () => {
+                          await Clipboard.setStringAsync(forwardingAddress);
+                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                          Alert.alert('Copied!', 'Forwarding address copied to clipboard');
+                        }}
+                        className="bg-slate-800/60 rounded-xl px-3 py-2 mt-2 flex-row items-center justify-between"
+                      >
+                        <Text
+                          className="text-blue-400 text-sm font-mono flex-1"
+                          style={{ fontFamily: 'SpaceMono_400Regular' }}
+                          numberOfLines={1}
+                        >
+                          {forwardingAddress}
+                        </Text>
+                        <Text className="text-slate-500 text-xs ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          Tap to copy
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 </View>
               </View>

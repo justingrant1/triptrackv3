@@ -2,7 +2,7 @@
  * Export utilities for generating CSV and formatted expense reports
  */
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import type { Receipt, Trip } from './types/database';
 

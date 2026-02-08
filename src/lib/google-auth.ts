@@ -67,10 +67,10 @@ function getRedirectScheme(): string {
  * Create an OAuth request configuration
  */
 export function useGoogleAuthRequest() {
-  const redirectUri = AuthSession.makeRedirectUri({
-    scheme: getRedirectScheme(),
-    path: 'oauth/callback',
-  });
+  // For iOS native OAuth, use single slash format: scheme:/path
+  // Not double slash: scheme://path
+  const scheme = getRedirectScheme();
+  const redirectUri = `${scheme}:/oauth`;
 
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
