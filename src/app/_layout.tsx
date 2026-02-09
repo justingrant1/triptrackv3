@@ -9,7 +9,7 @@ import { createAsyncStoragePersister } from '@/lib/query-persister';
 import { isAuthError } from '@/lib/error-utils';
 import { supabase } from '@/lib/supabase';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { View, ActivityIndicator } from 'react-native';
 import { useFonts } from 'expo-font';
@@ -101,6 +101,45 @@ function RootLayoutNav({
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Clear React Query cache when user changes (logout or account switch)
+  // This prevents stale data from a previous account leaking to a new user
+  const previousUserIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const currentUserId = user?.id ?? null;
+
+    // Skip the very first render (initialization)
+    if (previousUserIdRef.current === undefined) {
+      previousUserIdRef.current = currentUserId;
+      return;
+    }
+
+    // User changed (logout, login as different user, or account switch)
+    if (previousUserIdRef.current !== currentUserId) {
+      console.log('[Auth] User changed, clearing query cache...',
+        previousUserIdRef.current ? 'old user' : 'no user',
+        '→',
+        currentUserId ? 'new user' : 'logged out'
+      );
+
+      // Clear in-memory cache immediately
+      queryClient.clear();
+
+      // Also clear the persisted AsyncStorage cache
+      try {
+        const result = asyncStoragePersister.removeClient();
+        if (result && typeof (result as Promise<void>).catch === 'function') {
+          (result as Promise<void>).catch((err: unknown) => {
+            console.warn('[Auth] Failed to clear persisted cache:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('[Auth] Failed to clear persisted cache:', err);
+      }
+
+      previousUserIdRef.current = currentUserId;
+    }
+  }, [user?.id]);
 
   // Initialize RevenueCat when user is authenticated
   useEffect(() => {
@@ -199,14 +238,25 @@ function RootLayoutNav({
     if (!isInitialized) return;
 
     const inAuthGroup = segments[0] === 'login';
+    const inOnboarding = segments[0] === 'onboarding';
 
-    if (!user && !inAuthGroup) {
-      // Redirect to login if not authenticated
+    if (!user && !inAuthGroup && !inOnboarding) {
+      // Redirect to login if not authenticated (but not if on onboarding — 
+      // onboarding handles its own navigation when complete)
       router.replace('/login');
     } else if (user && inAuthGroup) {
-      // Redirect to app if authenticated and on login screen
-      router.replace('/(tabs)');
+      // User just authenticated while on login screen.
+      // Check if this is a brand new account — if so, send to onboarding.
+      const createdAt = user.created_at ? new Date(user.created_at).getTime() : 0;
+      const isNewUser = (Date.now() - createdAt) < 30000; // Created within last 30 seconds
+
+      if (isNewUser) {
+        router.replace('/onboarding');
+      } else {
+        router.replace('/(tabs)');
+      }
     }
+    // Don't redirect away from onboarding — let the user complete it
   }, [user, segments, isInitialized, router]);
 
   // Hide splash screen when both fonts and auth are ready

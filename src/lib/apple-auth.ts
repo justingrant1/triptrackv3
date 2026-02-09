@@ -76,9 +76,13 @@ export async function signInWithApple(): Promise<AppleAuthResponse> {
       };
     }
 
-    // 6. If Apple provided the user's name (only on first sign-in), update the profile
+    // 6. Detect new user by checking if the account was just created (within last 30s)
+    // Apple only provides the user's name on the very first authorization for this app,
+    // so we can't rely on fullName alone — if the user re-authorizes or hid their email,
+    // fullName will be null even for a brand new Supabase account.
     const fullName = credential.fullName;
-    const isNewUser = !!(fullName?.givenName || fullName?.familyName);
+    const createdAt = data.user?.created_at ? new Date(data.user.created_at).getTime() : 0;
+    const isNewUser = (Date.now() - createdAt) < 30000; // Created within last 30 seconds
 
     if (isNewUser && data.user) {
       const displayName = [fullName?.givenName, fullName?.familyName]
