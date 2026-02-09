@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../supabase';
 import type { Reservation, ReservationInsert, ReservationUpdate } from '../types/database';
+import { rescheduleRemindersForReservation, cancelRemindersForReservation } from '../notifications';
 
 /**
  * Fetch all reservations for a specific trip
@@ -68,6 +69,8 @@ export function useCreateReservation() {
       queryClient.invalidateQueries({ queryKey: ['reservations', data.trip_id] });
       // Also invalidate the trip to update summary
       queryClient.invalidateQueries({ queryKey: ['trips', data.trip_id] });
+      // Schedule local reminders for the new reservation
+      rescheduleRemindersForReservation(data).catch(console.error);
     },
   });
 }
@@ -96,6 +99,8 @@ export function useUpdateReservation() {
       queryClient.invalidateQueries({ queryKey: ['reservations', 'single', data.id] });
       // Also invalidate the trip to update summary
       queryClient.invalidateQueries({ queryKey: ['trips', data.trip_id] });
+      // Reschedule reminders with updated times
+      rescheduleRemindersForReservation(data).catch(console.error);
     },
   });
 }
@@ -121,24 +126,30 @@ export function useDeleteReservation() {
       queryClient.invalidateQueries({ queryKey: ['reservations', data.tripId] });
       // Also invalidate the trip to update summary
       queryClient.invalidateQueries({ queryKey: ['trips', data.tripId] });
+      // Cancel local reminders for deleted reservation
+      cancelRemindersForReservation(data.id).catch(console.error);
     },
   });
 }
 
 /**
- * Fetch upcoming reservations (next 48 hours)
+ * Fetch upcoming reservations (from start of today through next 48 hours).
+ * Includes reservations that already started today so flights that have
+ * departed but not yet landed still appear on the Today tab.
  */
 export function useUpcomingReservations() {
   return useQuery({
     queryKey: ['reservations', 'upcoming'],
     queryFn: async () => {
       const now = new Date();
+      // Start of today (midnight local time)
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const in48Hours = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
       const { data, error } = await supabase
         .from('reservations')
         .select('*')
-        .gte('start_time', now.toISOString())
+        .gte('start_time', startOfToday.toISOString())
         .lte('start_time', in48Hours.toISOString())
         .order('start_time', { ascending: true });
 

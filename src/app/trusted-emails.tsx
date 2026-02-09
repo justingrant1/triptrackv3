@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, TextInput, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, TextInput, Alert, KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -89,7 +89,13 @@ export default function TrustedEmailsScreen() {
           </Pressable>
         </View>
 
-        <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          className="flex-1"
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+        >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           {/* Info Card */}
           <Animated.View
             entering={FadeInDown.duration(500)}
@@ -203,6 +209,8 @@ export default function TrustedEmailsScreen() {
 
           <View className="h-8" />
         </ScrollView>
+        </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
   );

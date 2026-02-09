@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../supabase';
 import type { Trip, TripInsert, TripUpdate } from '../types/database';
+import { rescheduleRemindersForTrip, cancelRemindersForTrip } from '../notifications';
 
 /**
  * Fetch all trips for the current user
@@ -78,9 +79,11 @@ export function useCreateTrip() {
       if (error) throw error;
       return data as Trip;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       // Invalidate and refetch trips
       queryClient.invalidateQueries({ queryKey: ['trips'] });
+      // Schedule local reminders for the new trip
+      rescheduleRemindersForTrip(data).catch(console.error);
     },
   });
 }
@@ -107,6 +110,8 @@ export function useUpdateTrip() {
       // Invalidate trips list and specific trip
       queryClient.invalidateQueries({ queryKey: ['trips'] });
       queryClient.invalidateQueries({ queryKey: ['trips', data.id] });
+      // Reschedule reminders with updated dates
+      rescheduleRemindersForTrip(data).catch(console.error);
     },
   });
 }
@@ -127,9 +132,11 @@ export function useDeleteTrip() {
       if (error) throw error;
       return tripId;
     },
-    onSuccess: () => {
+    onSuccess: (tripId) => {
       // Invalidate trips list
       queryClient.invalidateQueries({ queryKey: ['trips'] });
+      // Cancel local reminders for deleted trip
+      cancelRemindersForTrip(tripId).catch(console.error);
     },
   });
 }

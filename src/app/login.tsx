@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator, Image } from 'react-native';
+import { isAppleSignInAvailable } from '@/lib/apple-auth';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -38,7 +39,10 @@ export default function LoginScreen() {
   const [isPasswordFocused, setIsPasswordFocused] = useState(false);
 
   // Auth store
-  const { login, register, isLoading, error, clearError } = useAuthStore();
+  const { login, register, signInWithApple, isLoading, error, clearError } = useAuthStore();
+
+  // Check if Apple Sign-In is available (iOS only)
+  const showAppleSignIn = Platform.OS === 'ios';
 
   // Animation values
   const buttonScale = useSharedValue(1);
@@ -126,15 +130,36 @@ export default function LoginScreen() {
     }
   }, [email, password, isLogin, login, register, buttonScale]);
 
-  const handleAppleSignIn = useCallback(() => {
+  const handleAppleSignIn = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     appleButtonScale.value = withSequence(
       withTiming(0.95, { duration: 100 }),
       withSpring(1, { damping: 10 })
     );
-    // Navigate to main app
-    router.replace('/(tabs)');
-  }, [appleButtonScale]);
+
+    try {
+      const result = await signInWithApple();
+
+      // User cancelled — do nothing
+      if (result.cancelled) return;
+
+      if (result.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // New Apple users go to onboarding, returning users go to main app
+        if (result.isNewUser) {
+          router.replace('/onboarding');
+        } else {
+          router.replace('/(tabs)');
+        }
+      } else if (result.error) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Sign In Failed', result.error);
+      }
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Apple Sign-In failed');
+    }
+  }, [appleButtonScale, signInWithApple]);
 
   const buttonAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: buttonScale.value }],
@@ -386,26 +411,29 @@ export default function LoginScreen() {
                 </Pressable>
               </Animated.View>
 
-              {/* Divider */}
-              <View className="flex-row items-center my-6">
-                <View className="flex-1 h-px bg-white/10" />
-                <Text className="text-white/30 text-sm mx-4">or continue with</Text>
-                <View className="flex-1 h-px bg-white/10" />
-              </View>
-
-              {/* Apple Sign In */}
-              <Animated.View style={appleButtonAnimatedStyle}>
-                <Pressable onPress={handleAppleSignIn}>
-                  <View className="bg-white rounded-2xl p-4 flex-row items-center justify-center">
-                    <View className="mr-3">
-                      <AppleLogo />
-                    </View>
-                    <Text className="text-black text-base font-semibold">
-                      Continue with Apple
-                    </Text>
+              {/* Divider + Apple Sign In (iOS only) */}
+              {showAppleSignIn && (
+                <>
+                  <View className="flex-row items-center my-6">
+                    <View className="flex-1 h-px bg-white/10" />
+                    <Text className="text-white/30 text-sm mx-4">or continue with</Text>
+                    <View className="flex-1 h-px bg-white/10" />
                   </View>
-                </Pressable>
-              </Animated.View>
+
+                  <Animated.View style={appleButtonAnimatedStyle}>
+                    <Pressable onPress={handleAppleSignIn} disabled={isLoading}>
+                      <View className="bg-white rounded-2xl p-4 flex-row items-center justify-center">
+                        <View className="mr-3">
+                          <AppleLogo />
+                        </View>
+                        <Text className="text-black text-base font-semibold">
+                          Continue with Apple
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </Animated.View>
+                </>
+              )}
             </Animated.View>
 
             {/* Footer */}

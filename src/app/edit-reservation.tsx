@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -7,7 +7,6 @@ import { ChevronLeft, Calendar, Clock } from 'lucide-react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Platform } from 'react-native';
 import { useReservation, useUpdateReservation } from '@/lib/hooks/useReservations';
 import type { Reservation } from '@/lib/types/database';
 
@@ -150,7 +149,13 @@ export default function EditReservationScreen() {
           </Pressable>
         </View>
 
-        <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          className="flex-1"
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+        >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <Animated.View entering={FadeInDown.duration(500)} className="gap-4 py-4">
             {/* Type Selection */}
             <View>
@@ -319,6 +324,8 @@ export default function EditReservationScreen() {
 
           <View className="h-8" />
         </ScrollView>
+        </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
       {/* Date/Time Pickers */}

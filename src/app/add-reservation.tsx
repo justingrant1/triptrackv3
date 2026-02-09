@@ -9,6 +9,9 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,8 +35,10 @@ import {
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTrip } from '@/lib/hooks/useTrips';
 import { useCreateReservation } from '@/lib/hooks/useReservations';
+import { checkFlightStatusForTrip } from '@/lib/flight-status';
 import type { Reservation } from '@/lib/types/database';
 
 type ReservationType = Reservation['type'];
@@ -69,6 +74,7 @@ export default function AddReservationScreen() {
   const { tripId } = useLocalSearchParams<{ tripId: string }>();
   const router = useRouter();
   
+  const queryClient = useQueryClient();
   const { data: trip, isLoading: tripLoading } = useTrip(tripId);
   const createReservation = useCreateReservation();
 
@@ -173,6 +179,21 @@ export default function AddReservationScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
+      // Build details object — for flights, include the flight number so the
+      // edge function can look it up via AirLabs
+      const details: Record<string, any> = {};
+      if (selectedType === 'flight' && title.trim()) {
+        details['Flight Number'] = title.trim().toUpperCase();
+        if (subtitle.trim()) {
+          // Parse route like "SFO → JFK" or "SFO - JFK"
+          const routeMatch = subtitle.trim().match(/([A-Z]{3})\s*[→\-–>to]+\s*([A-Z]{3})/i);
+          if (routeMatch) {
+            details['Departure Airport'] = routeMatch[1].toUpperCase();
+            details['Arrival Airport'] = routeMatch[2].toUpperCase();
+          }
+        }
+      }
+
       await createReservation.mutateAsync({
         trip_id: tripId,
         type: selectedType,
@@ -183,12 +204,27 @@ export default function AddReservationScreen() {
         location: null,
         address: address.trim() || null,
         confirmation_number: confirmationNumber.trim() || null,
-        details: {},
+        details,
         status: 'confirmed',
         alert_message: null,
       });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // For flights, automatically fetch live status in the background
+      // so the trip detail screen shows gate/terminal/status immediately
+      if (selectedType === 'flight' && tripId) {
+        // Fire and forget — don't block navigation
+        checkFlightStatusForTrip(tripId)
+          .then(() => {
+            // Invalidate cache so trip detail screen picks up the new data
+            queryClient.invalidateQueries({ queryKey: ['reservations', tripId] });
+          })
+          .catch((err) => {
+            console.warn('[AddReservation] Background flight status fetch failed:', err);
+          });
+      }
+
       router.back();
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -242,6 +278,12 @@ export default function AddReservationScreen() {
           </Pressable>
         </View>
 
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          className="flex-1"
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+        >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <ScrollView className="flex-1" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View className="px-5 pb-8">
             {/* Type Selection */}
@@ -456,6 +498,8 @@ export default function AddReservationScreen() {
             </Animated.View>
           </View>
         </ScrollView>
+        </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
       {/* iOS Date/Time Picker Modal */}

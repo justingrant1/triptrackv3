@@ -61,10 +61,11 @@ export interface Receipt {
 export interface Notification {
   id: string;
   user_id: string;
-  type: 'gate_change' | 'delay' | 'reminder' | 'confirmation' | 'trip_summary';
+  type: 'gate_change' | 'delay' | 'cancellation' | 'reminder' | 'confirmation' | 'trip_summary';
   title: string;
   message: string;
   trip_id: string | null;
+  reservation_id: string | null;
   read: boolean;
   created_at: string;
 }

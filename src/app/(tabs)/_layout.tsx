@@ -5,7 +5,10 @@ import { Compass, Map, Receipt, User, Sparkles } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { useUpcomingReservations } from '@/lib/hooks/useReservations';
+
+export const unstable_settings = {
+  initialRouteName: 'trips',
+};
 
 function TabBarIcon({ icon: Icon, color, focused }: { icon: typeof Compass; color: string; focused: boolean }) {
   return (
@@ -56,31 +59,6 @@ function AskAIButton() {
 }
 
 export default function TabLayout() {
-  const router = useRouter();
-  const { data: upcomingReservations } = useUpcomingReservations();
-  const hasRedirected = React.useRef(false);
-
-  // Smart default: if there are upcoming reservations, redirect to Today tab on first mount
-  React.useEffect(() => {
-    if (hasRedirected.current) return;
-    if (!upcomingReservations) return; // Still loading — wait
-
-    if (upcomingReservations.length > 0) {
-      hasRedirected.current = true;
-      // Small delay to ensure tabs are mounted before navigating
-      setTimeout(() => {
-        try {
-          router.replace('/(tabs)/index');
-        } catch {
-          // Silently fail — user just stays on Trips tab
-        }
-      }, 50);
-    } else {
-      // No reservations — mark as done so we don't keep checking
-      hasRedirected.current = true;
-    }
-  }, [upcomingReservations]);
-
   return (
     <ErrorBoundary
       fallbackTitle="Tab Error"

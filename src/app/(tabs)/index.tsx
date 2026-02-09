@@ -22,8 +22,6 @@ import {
   Navigation,
   Phone,
   CreditCard,
-  Hash,
-  Info,
   ExternalLink,
 } from 'lucide-react-native';
 import Animated, {
@@ -45,8 +43,25 @@ import { formatTime, formatDate, getCountdown, isToday, isTomorrow } from '@/lib
 import { useAuthStore } from '@/lib/state/auth-store';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
+import { ReservationExpandedDetails } from '@/components/ReservationExpandedDetails';
+import { FlightStatusBar } from '@/components/FlightStatusBar';
+import { useUnreadNotificationCount } from '@/lib/hooks/useNotifications';
+import { isNetworkError } from '@/lib/error-utils';
+import { OfflineToast } from '@/components/OfflineToast';
+import { getStoredFlightStatus } from '@/lib/flight-status';
+import type { FlightStatusData } from '@/lib/flight-status';
 
 type ReservationType = Reservation['type'];
+
+/** Check if a reservation is cancelled (DB status or live flight API status) */
+function isReservationCancelled(reservation: Reservation): boolean {
+  if (reservation.status === 'cancelled') return true;
+  if (reservation.type === 'flight') {
+    const flightStatus = reservation.details?._flight_status as FlightStatusData | undefined;
+    if (flightStatus?.flight_status === 'cancelled') return true;
+  }
+  return false;
+}
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -120,108 +135,6 @@ function openDirections(destination: string, reservation?: Reservation) {
   }
 }
 
-/**
- * Render the expanded detail rows for a reservation.
- */
-function ReservationDetails({ reservation }: { reservation: Reservation }) {
-  const [primary] = getTypeColor(reservation.type);
-  const details = reservation.details || {};
-  const detailEntries = Object.entries(details).filter(
-    ([_, value]) => value !== null && value !== undefined && value !== ''
-  );
-
-  return (
-    <View className="mt-3 pt-3 border-t border-slate-700/50">
-      {/* Confirmation Number */}
-      {reservation.confirmation_number && (
-        <View className="flex-row items-center mb-2.5">
-          <Hash size={14} color="#64748B" />
-          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
-            Confirmation
-          </Text>
-          <Text className="text-white text-sm flex-1" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-            {reservation.confirmation_number}
-          </Text>
-        </View>
-      )}
-
-      {/* Location / Address */}
-      {reservation.location && (
-        <View className="flex-row items-center mb-2.5">
-          <MapPin size={14} color="#64748B" />
-          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
-            Location
-          </Text>
-          <Text className="text-slate-300 text-sm flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {reservation.location}
-          </Text>
-        </View>
-      )}
-
-      {reservation.address && (
-        <Pressable
-          onPress={() => openDirections(reservation.address!, reservation)}
-          className="flex-row items-center mb-2.5"
-        >
-          <Navigation size={14} color="#3B82F6" />
-          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
-            Address
-          </Text>
-          <Text className="text-blue-400 text-sm flex-1 underline" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {reservation.address}
-          </Text>
-        </Pressable>
-      )}
-
-      {/* Time range */}
-      {reservation.end_time && (
-        <View className="flex-row items-center mb-2.5">
-          <Clock size={14} color="#64748B" />
-          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
-            Time
-          </Text>
-          <Text className="text-slate-300 text-sm flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {formatTime(new Date(reservation.start_time))} → {formatTime(new Date(reservation.end_time))}
-          </Text>
-        </View>
-      )}
-
-      {/* Dynamic detail fields */}
-      {detailEntries.map(([key, value]) => (
-        <View key={key} className="flex-row items-center mb-2.5">
-          <Info size={14} color="#64748B" />
-          <Text className="text-slate-500 text-xs ml-2 w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
-            {key}
-          </Text>
-          <Text className="text-slate-300 text-sm flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-            {String(value)}
-          </Text>
-        </View>
-      ))}
-
-      {/* Status */}
-      {reservation.status && (
-        <View className="flex-row items-center mb-1">
-          <View
-            className="w-2 h-2 rounded-full mr-2 ml-1"
-            style={{
-              backgroundColor:
-                reservation.status === 'confirmed' ? '#10B981' :
-                reservation.status === 'delayed' ? '#F59E0B' :
-                reservation.status === 'cancelled' ? '#EF4444' : '#6B7280',
-            }}
-          />
-          <Text className="text-slate-500 text-xs w-24" style={{ fontFamily: 'DMSans_500Medium' }}>
-            Status
-          </Text>
-          <Text className="text-slate-300 text-sm capitalize" style={{ fontFamily: 'DMSans_500Medium' }}>
-            {reservation.status}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-}
 
 function NextUpCard({ reservation }: { reservation: Reservation }) {
   const router = useRouter();
@@ -360,10 +273,23 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
               </View>
             )}
 
-            {/* Expanded Details */}
+            {/* Flight Status Bar — always visible for flights with live data */}
+            {reservation.type === 'flight' && (() => {
+              const flightStatus = getStoredFlightStatus(reservation);
+              if (!flightStatus) return null;
+              return (
+                <View className="mb-3">
+                  <FlightStatusBar status={flightStatus} compact={false} />
+                </View>
+              );
+            })()}
+
+            {/* Expanded Details — uses same beautiful component as trip detail page */}
             {expanded && (
               <Animated.View entering={FadeInDown.duration(300)}>
-                <ReservationDetails reservation={reservation} />
+                <View className="mt-3 pt-3 border-t border-slate-700/50">
+                  <ReservationExpandedDetails reservation={reservation} compact showFlightStatus={false} />
+                </View>
 
                 {/* View Full Trip link */}
                 <Pressable
@@ -403,6 +329,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
   const router = useRouter();
   const [expanded, setExpanded] = React.useState(false);
   const [primary] = getTypeColor(reservation.type);
+  const cancelled = isReservationCancelled(reservation);
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -413,18 +340,41 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
     <Animated.View entering={FadeInRight.duration(400).delay(index * 100)}>
       <Pressable
         onPress={handlePress}
-        className="bg-slate-800/50 rounded-2xl p-4 border border-slate-700/50"
+        style={{
+          backgroundColor: cancelled ? 'rgba(239,68,68,0.06)' : 'rgba(30,41,59,0.5)',
+          borderRadius: 16,
+          padding: 16,
+          borderWidth: 1,
+          borderColor: cancelled ? 'rgba(239,68,68,0.2)' : 'rgba(51,65,85,0.5)',
+          opacity: cancelled ? 0.75 : 1,
+        }}
       >
         <View className="flex-row items-center">
           <View
-            style={{ backgroundColor: primary + '20', padding: 10, borderRadius: 12 }}
+            style={{ backgroundColor: (cancelled ? '#EF4444' : primary) + '20', padding: 10, borderRadius: 12 }}
           >
-            <ReservationIcon type={reservation.type} size={18} color={primary} />
+            <ReservationIcon type={reservation.type} size={18} color={cancelled ? '#EF4444' : primary} />
           </View>
           <View className="flex-1 ml-3">
-            <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-              {reservation.title}
-            </Text>
+            <View className="flex-row items-center">
+              <Text
+                style={{
+                  color: cancelled ? '#94A3B8' : '#FFFFFF',
+                  fontFamily: 'DMSans_700Bold',
+                  fontSize: 15,
+                  textDecorationLine: cancelled ? 'line-through' : 'none',
+                }}
+              >
+                {reservation.title}
+              </Text>
+              {cancelled && (
+                <View style={{ backgroundColor: 'rgba(239,68,68,0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, marginLeft: 8 }}>
+                  <Text style={{ color: '#EF4444', fontSize: 10, fontFamily: 'DMSans_700Bold' }}>
+                    Cancelled
+                  </Text>
+                </View>
+              )}
+            </View>
             {reservation.subtitle && (
               <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
                 {reservation.subtitle}
@@ -432,7 +382,14 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
             )}
           </View>
           <View className="items-end">
-            <Text className="text-white text-sm font-medium" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+            <Text
+              className="text-sm font-medium"
+              style={{
+                fontFamily: 'SpaceMono_700Bold',
+                color: cancelled ? '#64748B' : '#FFFFFF',
+                textDecorationLine: cancelled ? 'line-through' : 'none',
+              }}
+            >
               {formatTime(new Date(reservation.start_time))}
             </Text>
             <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
@@ -446,10 +403,23 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
           )}
         </View>
 
-        {/* Expanded Details */}
+        {/* Compact Flight Status Bar — always visible for flights with live data */}
+        {reservation.type === 'flight' && !cancelled && (() => {
+          const flightStatus = getStoredFlightStatus(reservation);
+          if (!flightStatus) return null;
+          return (
+            <View className="mt-3">
+              <FlightStatusBar status={flightStatus} compact />
+            </View>
+          );
+        })()}
+
+        {/* Expanded Details — uses same beautiful component as trip detail page */}
         {expanded && (
           <Animated.View entering={FadeInDown.duration(250)}>
-            <ReservationDetails reservation={reservation} />
+            <View className="mt-3 pt-3 border-t border-slate-700/50">
+              <ReservationExpandedDetails reservation={reservation} compact showFlightStatus={false} />
+            </View>
 
             {/* View Full Trip link */}
             <Pressable
@@ -512,22 +482,45 @@ export default function TodayScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const [refreshing, setRefreshing] = React.useState(false);
+  const [showOfflineToast, setShowOfflineToast] = React.useState(false);
   
   const { data: upcomingTrips = [], refetch: refetchTrips } = useUpcomingTrips();
   const { data: upcomingReservations = [], refetch: refetchReservations } = useUpcomingReservations();
+  const { data: unreadCount = 0 } = useUnreadNotificationCount();
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([refetchTrips(), refetchReservations()]);
+    try {
+      const [tripsResult, reservationsResult] = await Promise.all([
+        refetchTrips(),
+        refetchReservations(),
+      ]);
+      
+      // If either refetch failed with a network error, show the offline toast
+      if (
+        (tripsResult.error && isNetworkError(tripsResult.error)) ||
+        (reservationsResult.error && isNetworkError(reservationsResult.error))
+      ) {
+        setShowOfflineToast(true);
+      }
+    } catch (err: unknown) {
+      if (isNetworkError(err)) {
+        setShowOfflineToast(true);
+      }
+    }
     setRefreshing(false);
   }, [refetchTrips, refetchReservations]);
 
   const activeTrip = upcomingTrips.find(t => t.status === 'active');
-  const nextUp = upcomingReservations[0];
   
-  // Separate today vs later
+  // Skip cancelled reservations for "Next Up" — show the first non-cancelled one
+  const nextUp = upcomingReservations.find(r => !isReservationCancelled(r)) ?? null;
+  const nextUpIndex = nextUp ? upcomingReservations.indexOf(nextUp) : -1;
+  
+  // Separate today vs later (include cancelled ones in the list, just not as "Next Up")
   const todayReservations = upcomingReservations.filter(r => isToday(new Date(r.start_time)));
-  const laterToday = todayReservations.slice(1);
+  // "Later today" = today's reservations minus the one shown as Next Up
+  const laterToday = todayReservations.filter(r => r.id !== nextUp?.id);
   
   // Get upcoming reservations in next 48 hours (for "Coming Up" section)
   const upcoming48h = upcomingReservations;
@@ -658,6 +651,28 @@ export default function TodayScreen() {
                 className="bg-slate-800/80 p-2.5 rounded-full border border-slate-700/50"
               >
                 <Bell size={18} color="#94A3B8" />
+                {unreadCount > 0 && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: -4,
+                      right: -4,
+                      backgroundColor: '#EF4444',
+                      borderRadius: 10,
+                      minWidth: 18,
+                      height: 18,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      paddingHorizontal: 4,
+                      borderWidth: 2,
+                      borderColor: '#020617',
+                    }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 10, fontFamily: 'DMSans_700Bold' }}>
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </Text>
+                  </View>
+                )}
               </Pressable>
             </View>
           </Animated.View>
@@ -743,6 +758,12 @@ export default function TodayScreen() {
           <View className="h-8" />
         </ScrollView>
       </SafeAreaView>
+
+      {/* Offline toast — shown after pull-to-refresh fails */}
+      <OfflineToast
+        visible={showOfflineToast}
+        onDismiss={() => setShowOfflineToast(false)}
+      />
     </View>
   );
 }

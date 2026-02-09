@@ -41,6 +41,9 @@ import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { updateTripStatuses } from '@/lib/trip-status';
 import { useAuthStore } from '@/lib/state/auth-store';
+import { isNetworkError, isAuthError, getOfflineFriendlyMessage } from '@/lib/error-utils';
+import { OfflineToast } from '@/components/OfflineToast';
+import { WifiOff } from 'lucide-react-native';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH - 40;
@@ -248,6 +251,23 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
     );
   };
 
+  const tapGesture = Gesture.Tap()
+    .onStart(() => {
+      scale.value = withSpring(0.98, { damping: 15, stiffness: 200 });
+    })
+    .onEnd((_event, success) => {
+      scale.value = withSpring(1, { damping: 15, stiffness: 200 });
+      if (success) {
+        // If card is swiped open, close it instead of navigating
+        if (translateX.value < -10) {
+          translateX.value = withSpring(0, CLOSE_SPRING);
+        } else {
+          runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+          runOnJS(router.push)(`/trip/${trip.id}`);
+        }
+      }
+    });
+
   const panGesture = Gesture.Pan()
     .activeOffsetX([-8, 8])
     .failOffsetY([-12, 12])
@@ -294,6 +314,9 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
         translateX.value = withSpring(0, CLOSE_SPRING);
       }
     });
+
+  // Compose: pan takes priority over tap — both in same gesture system
+  const composedGesture = Gesture.Race(panGesture, tapGesture);
 
   const daysUntil = getDaysUntil(new Date(trip.start_date));
   const isActive = trip.status === 'active';
@@ -368,14 +391,9 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
       </Animated.View>
 
       {/* Swipeable Card */}
-      <GestureDetector gesture={panGesture}>
+      <GestureDetector gesture={composedGesture}>
         <Animated.View style={animatedStyle}>
-          <Pressable
-            onPressIn={handlePressIn}
-            onPressOut={handlePressOut}
-            onPress={handlePress}
-          >
-            <View className="rounded-3xl overflow-hidden" style={{ width: CARD_WIDTH }}>
+          <View className="rounded-3xl overflow-hidden" style={{ width: CARD_WIDTH }}>
             {/* Cover Image */}
             <View className="h-44 relative">
               <Image
@@ -454,7 +472,6 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
               </View>
             </View>
             </View>
-          </Pressable>
         </Animated.View>
       </GestureDetector>
     </Animated.View>
@@ -561,6 +578,19 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
     );
   };
 
+  const tapGesture = Gesture.Tap()
+    .onEnd((_event, success) => {
+      if (success) {
+        if (translateX.value < -10) {
+          translateX.value = withSpring(0, CLOSE_SPRING);
+        } else {
+          runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+          runOnJS(router.push)(`/trip/${trip.id}`);
+        }
+      }
+    });
+
+
   const panGesture = Gesture.Pan()
     .activeOffsetX([-8, 8])
     .failOffsetY([-12, 12])
@@ -602,6 +632,9 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
       }
     });
 
+  // Compose: pan takes priority over tap
+  const composedGesture = Gesture.Race(panGesture, tapGesture);
+
   if (isDeleting) {
     return (
       <Animated.View 
@@ -642,10 +675,9 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
       </Animated.View>
 
       {/* Swipeable Card */}
-      <GestureDetector gesture={panGesture}>
+      <GestureDetector gesture={composedGesture}>
         <Animated.View style={animatedStyle}>
-          <Pressable
-            onPress={handlePress}
+          <View
             className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
           >
             <Image
@@ -665,7 +697,7 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
               </Text>
             </View>
             <ChevronRight size={18} color="#64748B" />
-          </Pressable>
+          </View>
         </Animated.View>
       </GestureDetector>
     </Animated.View>
@@ -684,7 +716,14 @@ export default function TripsScreen() {
   const [refreshing, setRefreshing] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [showSearch, setShowSearch] = React.useState(false);
+  const [showOfflineToast, setShowOfflineToast] = React.useState(false);
   const hasAutoSynced = React.useRef(false);
+
+  // Determine if we should suppress the error and show cached data instead
+  const hasCachedData = trips.length > 0;
+  const isOfflineWithCache = !!error && isNetworkError(error) && hasCachedData;
+  const isOfflineWithoutCache = !!error && isNetworkError(error) && !hasCachedData;
+  const isRealError = !!error && !isNetworkError(error) && !isAuthError(error);
 
   // Auto-sync Gmail when screen loads (if connected and stale)
   React.useEffect(() => {
@@ -754,28 +793,41 @@ export default function TripsScreen() {
   const handleRefresh = async () => {
     setRefreshing(true);
     
-    // Update trip statuses first
-    if (user?.id) {
-      await updateTripStatuses(user.id);
-    }
-    
-    // Trigger Gmail sync on pull-to-refresh (respects 5-min rate limit)
-    if (connectedAccounts && connectedAccounts.length > 0) {
-      const gmailAccount = connectedAccounts.find(a => a.provider === 'gmail');
-      if (gmailAccount && !syncGmail.isPending) {
-        try {
-          await syncGmail.mutateAsync(gmailAccount.id);
-        } catch (err: any) {
-          // Silently handle rate limit errors — just means we synced recently
-          if (!err.message?.includes('wait')) {
-            console.warn('Pull-to-refresh sync failed:', err.message);
+    try {
+      // Update trip statuses first
+      if (user?.id) {
+        await updateTripStatuses(user.id).catch(() => {});
+      }
+      
+      // Trigger Gmail sync on pull-to-refresh (respects 5-min rate limit)
+      if (connectedAccounts && connectedAccounts.length > 0) {
+        const gmailAccount = connectedAccounts.find(a => a.provider === 'gmail');
+        if (gmailAccount && !syncGmail.isPending) {
+          try {
+            await syncGmail.mutateAsync(gmailAccount.id);
+          } catch (err: any) {
+            // Silently handle rate limit errors — just means we synced recently
+            if (!err.message?.includes('wait')) {
+              console.warn('Pull-to-refresh sync failed:', err.message);
+            }
           }
         }
       }
+      
+      // Then refetch to get updated data
+      const result = await refetch();
+      
+      // If refetch failed with a network error, show the offline toast
+      if (result.error && isNetworkError(result.error)) {
+        setShowOfflineToast(true);
+      }
+    } catch (err: any) {
+      // Network error during refresh — show toast instead of error state
+      if (isNetworkError(err)) {
+        setShowOfflineToast(true);
+      }
     }
     
-    // Then refetch to get updated data
-    await refetch();
     setRefreshing(false);
   };
 
@@ -872,8 +924,24 @@ export default function TripsScreen() {
             </View>
           )}
 
-          {/* Error State */}
-          {error && (
+          {/* Offline with no cache — friendly offline message */}
+          {isOfflineWithoutCache && (
+            <Animated.View
+              entering={FadeInDown.duration(600)}
+              className="mx-5 bg-amber-500/10 rounded-3xl p-8 items-center border border-amber-500/30"
+            >
+              <WifiOff size={32} color="#F59E0B" />
+              <Text className="text-amber-400 text-lg font-semibold text-center mt-4" style={{ fontFamily: 'DMSans_700Bold' }}>
+                You're offline
+              </Text>
+              <Text className="text-amber-400/70 text-sm text-center mt-2" style={{ fontFamily: 'DMSans_400Regular' }}>
+                {getOfflineFriendlyMessage(error, false)}
+              </Text>
+            </Animated.View>
+          )}
+
+          {/* Real error (not network, not auth) — show the error */}
+          {isRealError && (
             <Animated.View
               entering={FadeInDown.duration(600)}
               className="mx-5 bg-red-500/10 rounded-3xl p-8 items-center border border-red-500/30"
@@ -883,7 +951,7 @@ export default function TripsScreen() {
                 Failed to load trips
               </Text>
               <Text className="text-red-400/70 text-sm text-center mt-2" style={{ fontFamily: 'DMSans_400Regular' }}>
-                {error.message}
+                {error?.message}
               </Text>
               <Pressable
                 onPress={() => refetch()}
@@ -896,8 +964,8 @@ export default function TripsScreen() {
             </Animated.View>
           )}
 
-          {/* Featured Trips */}
-          {!isLoading && !error && featuredTrips.length > 0 && (
+          {/* Featured Trips — show even when offline if we have cached data */}
+          {!isLoading && (!error || isOfflineWithCache) && featuredTrips.length > 0 && (
             <View className="px-5">
               {featuredTrips.map((trip, index) => (
                 <TripCard key={trip.id} trip={trip} index={index} />
@@ -937,8 +1005,8 @@ export default function TripsScreen() {
             </Animated.View>
           )}
 
-          {/* Past Trips */}
-          {!isLoading && !error && sortedPastTrips.length > 0 && (
+          {/* Past Trips — show even when offline if we have cached data */}
+          {!isLoading && (!error || isOfflineWithCache) && sortedPastTrips.length > 0 && (
             <View className="mt-8 px-5 pb-8">
               <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                 Past Trips
@@ -952,6 +1020,12 @@ export default function TripsScreen() {
           <View className="h-8" />
         </ScrollView>
       </SafeAreaView>
+
+      {/* Offline toast — shown after pull-to-refresh fails */}
+      <OfflineToast
+        visible={showOfflineToast}
+        onDismiss={() => setShowOfflineToast(false)}
+      />
     </View>
   );
 }

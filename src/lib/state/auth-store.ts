@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { User, Session } from '@supabase/supabase-js';
 import { signIn, signUp, signOut, getSession, onAuthStateChange } from '../auth';
+import { signInWithApple as appleSignIn } from '../apple-auth';
 
 interface AuthState {
   user: User | null;
@@ -13,6 +14,7 @@ interface AuthState {
   initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
+  signInWithApple: () => Promise<{ success: boolean; isNewUser: boolean; cancelled?: boolean; error?: string }>;
   logout: () => Promise<void>;
   clearError: () => void;
 }
@@ -25,7 +27,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   error: null,
 
   /**
-   * Initialize auth state and set up listener
+   * Initialize auth state and set up listener.
+   * Handles offline gracefully: if getSession fails with a network error,
+   * we still mark as initialized so the app can show cached data.
    */
   initialize: async () => {
     try {
@@ -34,7 +38,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       
       if (error) {
         console.error('Error getting session:', error);
+        // If we have a persisted session from Supabase's SecureStore,
+        // the auth state listener below will pick it up.
+        // Mark as initialized so the app doesn't hang on the splash screen.
         set({ isInitialized: true, isLoading: false });
+
+        // Attempt a session refresh in case the token is expired
+        // This will silently fail if offline (which is fine)
+        const { supabase: supabaseClient } = await import('../supabase');
+        supabaseClient.auth.refreshSession().catch(() => {
+          // Silent failure — if offline, we'll retry when back online
+          console.log('[Auth] Session refresh failed during init (likely offline)');
+        });
         return;
       }
 
@@ -55,6 +70,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
     } catch (error: any) {
       console.error('Error initializing auth:', error);
+      // Even on error, mark as initialized so the app can proceed
+      // with cached data if available
       set({ isInitialized: true, isLoading: false });
     }
   },
@@ -123,6 +140,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const errorMessage = error.message || 'An unexpected error occurred';
       set({ isLoading: false, error: errorMessage });
       return { success: false, error: errorMessage };
+    }
+  },
+
+  /**
+   * Sign in with Apple (native iOS)
+   */
+  signInWithApple: async () => {
+    set({ isLoading: true, error: null });
+
+    try {
+      const { user, session, error, isNewUser } = await appleSignIn();
+
+      // User cancelled — not an error, just return silently
+      if (!user && !session && !error) {
+        set({ isLoading: false });
+        return { success: false, isNewUser: false, cancelled: true };
+      }
+
+      if (error) {
+        set({ isLoading: false, error: error.message });
+        return { success: false, isNewUser: false, error: error.message };
+      }
+
+      set({
+        user,
+        session,
+        isLoading: false,
+        error: null,
+      });
+
+      return { success: true, isNewUser };
+    } catch (error: any) {
+      const errorMessage = error.message || 'Apple Sign-In failed';
+      set({ isLoading: false, error: errorMessage });
+      return { success: false, isNewUser: false, error: errorMessage };
     }
   },
 

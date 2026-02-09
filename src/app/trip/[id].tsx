@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Image, Dimensions, SectionList, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, Image, Dimensions, SectionList, ActivityIndicator, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -34,6 +34,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTrip, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservations, useDeleteReservation } from '@/lib/hooks/useReservations';
 import type { Reservation } from '@/lib/types/database';
@@ -42,6 +43,53 @@ import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { shareTripNative } from '@/lib/sharing';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { FlightStatusBar } from '@/components/FlightStatusBar';
+import { ReservationExpandedDetails } from '@/components/ReservationExpandedDetails';
+import { useRefreshFlightStatus, useFlightStatusPolling } from '@/lib/hooks/useFlightStatus';
+import { getStoredFlightStatus, getFlightPhaseLabel, inferFlightPhase } from '@/lib/flight-status';
+import type { FlightStatusData, FlightPhase } from '@/lib/flight-status';
+
+/** Convert real flight API status to a LiveStatus chip for the card badge.
+ *  Uses inferFlightPhase() so the badge reflects actual timestamps,
+ *  not just the raw (possibly stale) API status field. */
+function getFlightLiveStatus(status: FlightStatusData): LiveStatus {
+  const effectivePhase = inferFlightPhase(status);
+  const delayMins = status.dep_delay ?? 0;
+
+  switch (effectivePhase) {
+    case 'scheduled':
+      if (delayMins >= 15) {
+        return { label: `Delayed ${delayMins}m`, color: 'amber', pulse: false };
+      }
+      // Check if boarding window (within 30 min of departure)
+      if (status.dep_scheduled || status.dep_estimated) {
+        const depTime = new Date(status.dep_estimated || status.dep_scheduled!).getTime();
+        const minsUntil = (depTime - Date.now()) / (1000 * 60);
+        if (minsUntil <= 30 && minsUntil > 0) {
+          return { label: 'Boarding', color: 'blue', pulse: true };
+        }
+        if (minsUntil <= 0) {
+          // Departure time passed but no dep_actual — likely boarding/taxiing
+          return { label: 'Boarding', color: 'blue', pulse: true };
+        }
+      }
+      return { label: 'On Time', color: 'green', pulse: false };
+    case 'active':
+      return { label: 'In Flight', color: 'blue', pulse: true };
+    case 'landed':
+      return { label: 'Landed', color: 'green', pulse: false };
+    case 'cancelled':
+      return { label: 'Cancelled', color: 'red', pulse: false };
+    case 'diverted':
+      return { label: 'Diverted', color: 'red', pulse: true };
+    case 'incident':
+      return { label: 'Incident', color: 'red', pulse: true };
+    case 'unknown':
+    default:
+      // Never say "Scheduled" when we don't know — be honest
+      return { label: 'Status Unknown', color: 'slate', pulse: false };
+  }
+}
 
 type ReservationType = Reservation['type'];
 
@@ -524,7 +572,12 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
   const deleteReservation = useDeleteReservation();
   const typeColor = getTypeColor(reservation.type);
   const statusColor = getStatusColor(reservation.status);
-  const liveStatus = getLiveStatus(reservation.type, new Date(reservation.start_time), reservation.end_time ? new Date(reservation.end_time) : undefined, reservation.status);
+  
+  // For flights with API data, use the real flight status instead of time-based guess
+  const flightStatusData = reservation.type === 'flight' ? (reservation.details?._flight_status as FlightStatusData | undefined) ?? null : null;
+  const liveStatus: LiveStatus | null = flightStatusData
+    ? getFlightLiveStatus(flightStatusData)
+    : getLiveStatus(reservation.type, new Date(reservation.start_time), reservation.end_time ? new Date(reservation.end_time) : undefined, reservation.status);
 
   const handleCopyConfirmation = async () => {
     if (reservation.confirmation_number) {
@@ -576,6 +629,10 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
   const gateInfo = reservation.type === 'flight' && reservation.address ? reservation.address.split(',')[0] : null;
   const seatInfo = reservation.type === 'flight' ? reservation.details?.['Seat']?.split(' ')[0] : null;
 
+  // Determine if this flight is cancelled
+  const isCancelled = reservation.status === 'cancelled' ||
+    flightStatusData?.flight_status === 'cancelled';
+
   return (
     <Animated.View
       entering={FadeInRight.duration(400).delay(index * 80)}
@@ -588,7 +645,13 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
           style={{ marginBottom: -12 }}
         />
         <View
-          style={{ backgroundColor: typeColor, width: 12, height: 12, borderRadius: 6 }}
+          style={{
+            backgroundColor: isCancelled ? '#EF4444' : typeColor,
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            opacity: isCancelled ? 0.6 : 1,
+          }}
         />
         <View
           className={`w-0.5 flex-1 ${isLast ? 'bg-transparent' : 'bg-slate-700'}`}
@@ -602,7 +665,14 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
         onLongPress={handleDelete}
         className="flex-1 mb-4"
       >
-        <View className="bg-slate-800/60 rounded-2xl border border-slate-700/50 overflow-hidden">
+        <View
+          className="rounded-2xl overflow-hidden"
+          style={{
+            backgroundColor: isCancelled ? 'rgba(239,68,68,0.06)' : 'rgba(30,41,59,0.6)',
+            borderWidth: 1,
+            borderColor: isCancelled ? 'rgba(239,68,68,0.25)' : 'rgba(51,65,85,0.5)',
+          }}
+        >
           {/* Main Row */}
           <View className="p-4">
             <View className="flex-row items-start">
@@ -685,8 +755,23 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
               </View>
             </View>
 
+            {/* Cancellation Banner */}
+            {isCancelled && (
+              <View className="mt-3 bg-red-500/15 rounded-xl p-3 flex-row items-center border border-red-500/20">
+                <AlertCircle size={16} color="#EF4444" />
+                <View className="ml-2 flex-1">
+                  <Text className="text-red-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    Flight Cancelled
+                  </Text>
+                  <Text className="text-red-400/70 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    Contact your airline for rebooking options
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {/* Alert */}
-            {reservation.alert_message && (
+            {reservation.alert_message && !isCancelled && (
               <View className="mt-3 bg-amber-500/10 rounded-xl p-3 flex-row items-center">
                 <AlertCircle size={14} color="#F59E0B" />
                 <Text className="text-amber-400 text-xs ml-2 flex-1" style={{ fontFamily: 'DMSans_500Medium' }}>
@@ -694,15 +779,26 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
                 </Text>
               </View>
             )}
+
+            {/* Flight Status Bar — hero element for flights with live data */}
+            {reservation.type === 'flight' && (() => {
+              const flightStatus = getStoredFlightStatus(reservation);
+              if (!flightStatus) return null;
+              return (
+                <View className="mt-3">
+                  <FlightStatusBar status={flightStatus} compact={!expanded} />
+                </View>
+              );
+            })()}
           </View>
 
-          {/* Expanded Details — Type-specific layouts */}
+          {/* Expanded Details — Type-specific layouts (shared component) */}
           {expanded && (
             <Animated.View
               entering={FadeInDown.duration(300)}
               className="border-t border-slate-700/50"
             >
-              <ExpandedDetails reservation={reservation} onCopyConfirmation={handleCopyConfirmation} />
+              <ReservationExpandedDetails reservation={reservation} showFlightStatus={false} />
             </Animated.View>
           )}
         </View>
@@ -720,6 +816,60 @@ function TripDetailScreenContent() {
   const { data: weather } = useWeather(trip?.destination);
   const deleteTrip = useDeleteTrip();
   
+  // Flight status: pull-to-refresh mutation + background polling
+  const queryClient = useQueryClient();
+  const refreshFlightStatus = useRefreshFlightStatus();
+  const flightReservations = React.useMemo(
+    () => reservations.filter((r: Reservation) => r.type === 'flight'),
+    [reservations],
+  );
+  useFlightStatusPolling(id, flightReservations);
+
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const handleRefresh = React.useCallback(async () => {
+    if (!id) return;
+    setRefreshing(true);
+    try {
+      console.log('[FlightRefresh] Starting refresh for trip:', id);
+      console.log('[FlightRefresh] Flight reservations count:', flightReservations.length);
+      if (flightReservations.length > 0) {
+        // Log the flight numbers we're looking for
+        flightReservations.forEach((r: Reservation) => {
+          const flightNum = r.details?.['Flight Number'] || r.details?.['Flight'] || r.title;
+          console.log(`[FlightRefresh] Reservation "${r.title}" - Flight: ${flightNum}`);
+        });
+        const result = await refreshFlightStatus.mutateAsync(id);
+        console.log('[FlightRefresh] Result:', JSON.stringify(result, null, 2));
+        
+        // Force refetch reservations from DB to get updated flight details
+        await queryClient.invalidateQueries({ queryKey: ['reservations', id] });
+        
+        if (result?.results) {
+          const errors = result.results.filter((r: any) => r.error);
+          if (errors.length > 0) {
+            Alert.alert(
+              'Flight Status',
+              errors.map((e: any) => `${e.flight_iata || 'Unknown'}: ${e.error}`).join('\n'),
+            );
+          } else {
+            const updated = result.results.filter((r: any) => r.status);
+            if (updated.length > 0) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
+          }
+        }
+      } else {
+        console.log('[FlightRefresh] No flight reservations found in this trip');
+      }
+    } catch (e: any) {
+      console.error('[FlightRefresh] Error:', e);
+      Alert.alert('Flight Status Error', e?.message || 'Failed to check flight status. Please try again.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [id, flightReservations.length]);
+
   const scrollY = useSharedValue(0);
   const isLoading = tripLoading || reservationsLoading;
 
@@ -902,6 +1052,15 @@ function TripDetailScreenContent() {
         stickySectionHeadersEnabled={true}
         sections={sections}
         keyExtractor={(item) => item.id}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3B82F6"
+            colors={['#3B82F6']}
+            progressViewOffset={HEADER_HEIGHT - 40}
+          />
+        }
         ListHeaderComponent={() => (
           <View className="px-5 pb-6">
             <Pressable onLongPress={handleDeleteTrip}>

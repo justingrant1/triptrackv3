@@ -3,7 +3,11 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from '@/lib/useColorScheme';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { createAsyncStoragePersister } from '@/lib/query-persister';
+import { isAuthError } from '@/lib/error-utils';
+import { supabase } from '@/lib/supabase';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/lib/state/auth-store';
@@ -19,6 +23,8 @@ import { initializeRevenueCat } from '@/lib/revenuecat';
 import { subscribeToDeepLinks, getInitialDeepLink, handleDeepLink } from '@/lib/sharing';
 import { updateTripStatuses } from '@/lib/trip-status';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
+import { registerForPushNotifications, savePushToken } from '@/lib/notifications';
+import * as Notifications from 'expo-notifications';
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
@@ -32,22 +38,52 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Cache data for 24 hours
+      // Cache data for 24 hours — persisted data stays usable offline for a full day
       gcTime: 1000 * 60 * 60 * 24,
-      // Keep data fresh for 5 minutes
+      // Keep data fresh for 5 minutes — background refresh when online
       staleTime: 1000 * 60 * 5,
-      // Retry failed requests
-      retry: 2,
+      // Retry failed requests (but not auth errors)
+      retry: (failureCount, error) => {
+        // Don't retry auth errors — they need a session refresh, not a retry
+        if (isAuthError(error)) return false;
+        return failureCount < 2;
+      },
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
       // Network mode for offline support
       networkMode: 'offlineFirst',
     },
     mutations: {
-      // Retry mutations on network errors
-      retry: 1,
+      // Retry mutations on network errors (but not auth errors)
+      retry: (failureCount, error) => {
+        if (isAuthError(error)) return false;
+        return failureCount < 1;
+      },
       networkMode: 'offlineFirst',
     },
   },
+});
+
+// Create the AsyncStorage persister for cache persistence across app restarts
+const asyncStoragePersister = createAsyncStoragePersister();
+
+// Handle auth errors globally: attempt session refresh when JWT expires
+queryClient.getQueryCache().subscribe((event) => {
+  if (event.type === 'updated' && event.query.state.status === 'error') {
+    const error = event.query.state.error;
+    if (isAuthError(error)) {
+      console.log('[Auth] Query failed with auth error, attempting session refresh...');
+      supabase.auth.refreshSession().then(({ error: refreshError }) => {
+        if (refreshError) {
+          console.warn('[Auth] Session refresh failed:', refreshError.message);
+          // If refresh fails, the auth store listener will handle logout
+        } else {
+          console.log('[Auth] Session refreshed, invalidating failed queries...');
+          // Retry the failed query after successful refresh
+          queryClient.invalidateQueries({ queryKey: event.query.queryKey });
+        }
+      });
+    }
+  }
 });
 
 function RootLayoutNav({
@@ -87,6 +123,49 @@ function RootLayoutNav({
       });
     }
   }, [user?.id]);
+
+  // Register for push notifications when user is authenticated
+  useEffect(() => {
+    if (!user?.id) return;
+
+    registerForPushNotifications().then((token) => {
+      if (token) {
+        savePushToken(token);
+        console.log('[Push] Registered with token:', token.substring(0, 20) + '...');
+      }
+    });
+  }, [user?.id]);
+
+  // Notification listeners: tap-to-navigate + foreground handling
+  useEffect(() => {
+    if (!user) return;
+
+    // When user taps a notification → navigate to the relevant trip
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const data = response.notification.request.content.data;
+        if (data?.tripId) {
+          router.push(`/trip/${data.tripId}`);
+        } else {
+          // No trip context — go to notifications inbox
+          router.push('/notifications');
+        }
+      }
+    );
+
+    // Foreground notification received — just log it (the banner shows automatically
+    // because of setNotificationHandler in notifications.ts)
+    const receivedSubscription = Notifications.addNotificationReceivedListener(
+      (notification) => {
+        console.log('[Push] Foreground notification:', notification.request.content.title);
+      }
+    );
+
+    return () => {
+      responseSubscription.remove();
+      receivedSubscription.remove();
+    };
+  }, [user, router]);
 
   // Handle deep links
   useEffect(() => {
@@ -224,12 +303,21 @@ export default function RootLayout() {
   });
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister: asyncStoragePersister,
+        // Max age for persisted cache: 24 hours
+        maxAge: 1000 * 60 * 60 * 24,
+        // Buster string — increment to invalidate old caches on app updates
+        buster: 'v1',
+      }}
+    >
       <GestureHandlerRootView style={{ flex: 1 }}>
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
         <RootLayoutNav colorScheme={colorScheme} fontsLoaded={fontsLoaded} />
         <OfflineIndicator />
       </GestureHandlerRootView>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
 }
