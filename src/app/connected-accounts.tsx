@@ -309,33 +309,43 @@ export default function ConnectedAccountsScreen() {
                         </View>
                       </View>
 
-                      <View className="flex-row mt-3 gap-2">
-                        <Pressable
-                          onPress={() => handleSync(account.id)}
-                          disabled={syncGmail.isPending}
-                          className={`flex-1 py-3 rounded-xl flex-row items-center justify-center ${
-                            syncGmail.isPending ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-slate-700/50'
-                          }`}
-                        >
-                          {syncGmail.isPending ? (
-                            <ActivityIndicator size="small" color="#3B82F6" />
-                          ) : (
-                            <RefreshCw size={16} color="#94A3B8" />
-                          )}
-                          <Text
-                            className={`text-sm ml-2 ${syncGmail.isPending ? 'text-blue-400' : 'text-slate-300'}`}
-                            style={{ fontFamily: 'DMSans_500Medium' }}
+                      <View className="mt-3">
+                        <View className="flex-row gap-2">
+                          <Pressable
+                            onPress={() => handleSync(account.id)}
+                            disabled={syncGmail.isPending}
+                            className={`flex-1 py-3 rounded-xl flex-row items-center justify-center ${
+                              syncGmail.isPending ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-slate-700/50'
+                            }`}
                           >
-                            {syncGmail.isPending ? 'Scanning emails...' : 'Sync Now'}
+                            {syncGmail.isPending ? (
+                              <ActivityIndicator size="small" color="#3B82F6" />
+                            ) : (
+                              <RefreshCw size={16} color="#94A3B8" />
+                            )}
+                            <Text
+                              className={`text-sm ml-2 ${syncGmail.isPending ? 'text-blue-400' : 'text-slate-300'}`}
+                              style={{ fontFamily: 'DMSans_500Medium' }}
+                            >
+                              {syncGmail.isPending ? 'Scanning emails...' : 'Sync Now'}
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handleDisconnect(account.id, account.email)}
+                            disabled={deleteAccount.isPending}
+                            className="bg-red-500/10 py-2.5 px-4 rounded-xl flex-row items-center"
+                          >
+                            <Unlink size={16} color="#EF4444" />
+                          </Pressable>
+                        </View>
+                        {syncGmail.isPending && (
+                          <Text
+                            className="text-slate-500 text-xs text-center mt-2"
+                            style={{ fontFamily: 'DMSans_400Regular' }}
+                          >
+                            This may take a minute. You can leave this page — we'll notify you when it's done.
                           </Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => handleDisconnect(account.id, account.email)}
-                          disabled={deleteAccount.isPending}
-                          className="bg-red-500/10 py-2.5 px-4 rounded-xl flex-row items-center"
-                        >
-                          <Unlink size={16} color="#EF4444" />
-                        </Pressable>
+                        )}
                       </View>
                     </Animated.View>
                   );
