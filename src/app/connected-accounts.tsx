@@ -17,6 +17,7 @@ import {
 import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useSyncStore } from '@/lib/state/sync-store';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import {
   useConnectedAccounts,
@@ -53,6 +54,7 @@ export default function ConnectedAccountsScreen() {
   const addAccount = useAddConnectedAccount();
   const deleteAccount = useDeleteConnectedAccount();
   const syncGmail = useSyncGmail();
+  const isSyncing = useSyncStore((s) => s.isSyncing);
 
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
   const [copiedAddress, setCopiedAddress] = React.useState(false);
@@ -313,21 +315,21 @@ export default function ConnectedAccountsScreen() {
                         <View className="flex-row gap-2">
                           <Pressable
                             onPress={() => handleSync(account.id)}
-                            disabled={syncGmail.isPending}
+                            disabled={isSyncing}
                             className={`flex-1 py-3 rounded-xl flex-row items-center justify-center ${
-                              syncGmail.isPending ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-slate-700/50'
+                              isSyncing ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-slate-700/50'
                             }`}
                           >
-                            {syncGmail.isPending ? (
+                            {isSyncing ? (
                               <ActivityIndicator size="small" color="#3B82F6" />
                             ) : (
                               <RefreshCw size={16} color="#94A3B8" />
                             )}
                             <Text
-                              className={`text-sm ml-2 ${syncGmail.isPending ? 'text-blue-400' : 'text-slate-300'}`}
+                              className={`text-sm ml-2 ${isSyncing ? 'text-blue-400' : 'text-slate-300'}`}
                               style={{ fontFamily: 'DMSans_500Medium' }}
                             >
-                              {syncGmail.isPending ? 'Scanning emails...' : 'Sync Now'}
+                              {isSyncing ? 'Scanning emails...' : 'Sync Now'}
                             </Text>
                           </Pressable>
                           <Pressable
@@ -338,7 +340,7 @@ export default function ConnectedAccountsScreen() {
                             <Unlink size={16} color="#EF4444" />
                           </Pressable>
                         </View>
-                        {syncGmail.isPending && (
+                        {isSyncing && (
                           <Text
                             className="text-slate-500 text-xs text-center mt-2"
                             style={{ fontFamily: 'DMSans_400Regular' }}

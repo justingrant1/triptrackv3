@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/state/auth-store';
+import { useSyncStore } from '@/lib/state/sync-store';
 import type { ConnectedAccount, ConnectedAccountInsert } from '@/lib/types/database';
 import { revokeToken } from '@/lib/google-auth';
 
@@ -179,10 +180,14 @@ export function useDeleteConnectedAccount() {
 export function useSyncGmail() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+  const { startSync, finishSync } = useSyncStore.getState();
 
   return useMutation({
     mutationFn: async ({ accountId, onProgress }: { accountId: string; onProgress?: (stats: { emailsProcessed: number; tripsCreated: number; reservationsCreated: number; round: number; scanning: boolean }) => void }) => {
       if (!user?.id) throw new Error('User not authenticated');
+
+      // Mark sync as in-progress globally
+      startSync(accountId);
 
       // Rate limiting: Check last sync time (5 minutes minimum between syncs)
       const { data: account } = await supabase
@@ -269,6 +274,10 @@ export function useSyncGmail() {
       queryClient.invalidateQueries({ queryKey: ['connected-account', variables.accountId] });
       // Also invalidate trips since new ones may have been created
       queryClient.invalidateQueries({ queryKey: ['trips', user?.id] });
+    },
+    onSettled: () => {
+      // Always clear global sync state (success or error)
+      finishSync();
     },
   });
 }
