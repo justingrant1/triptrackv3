@@ -387,7 +387,7 @@ export default function RootLayout() {
         // Max age for persisted cache: 24 hours
         maxAge: 1000 * 60 * 60 * 24,
         // Buster string — increment to invalidate old caches on app updates
-        buster: 'v1',
+        buster: 'v2',
       }}
     >
       <GestureHandlerRootView style={{ flex: 1 }}>

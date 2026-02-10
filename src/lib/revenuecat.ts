@@ -11,9 +11,13 @@ import { supabase } from './supabase';
 
 const REVENUECAT_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY!;
 
+// Track whether SDK has been configured (configure should only be called once)
+let isConfigured = false;
+
 /**
  * Initialize RevenueCat SDK
- * Call this once on app startup after user is authenticated
+ * Call this once on app startup after user is authenticated.
+ * Uses configure() on first call, then logIn() for subsequent user switches.
  */
 export async function initializeRevenueCat(userId: string) {
   try {
@@ -22,21 +26,46 @@ export async function initializeRevenueCat(userId: string) {
       throw new Error('EXPO_PUBLIC_REVENUECAT_API_KEY is not configured. Please add it to your EAS environment variables.');
     }
     
-    // Configure SDK
-    Purchases.setLogLevel(LOG_LEVEL.DEBUG); // Change to INFO in production
-    
-    // Initialize with API key
-    if (Platform.OS === 'ios') {
-      await Purchases.configure({ apiKey: REVENUECAT_API_KEY, appUserID: userId });
-    } else if (Platform.OS === 'android') {
-      // For Android, you'll need a separate API key from RevenueCat
-      await Purchases.configure({ apiKey: REVENUECAT_API_KEY, appUserID: userId });
+    if (!isConfigured) {
+      // First time: configure the SDK
+      Purchases.setLogLevel(LOG_LEVEL.DEBUG); // Change to INFO in production
+      
+      if (Platform.OS === 'ios') {
+        await Purchases.configure({ apiKey: REVENUECAT_API_KEY, appUserID: userId });
+      } else if (Platform.OS === 'android') {
+        await Purchases.configure({ apiKey: REVENUECAT_API_KEY, appUserID: userId });
+      }
+      
+      isConfigured = true;
+      console.log('✅ RevenueCat configured for user:', userId);
+    } else {
+      // SDK already configured — switch to the new user via logIn()
+      // This properly associates the RevenueCat user with the app account
+      // and does NOT transfer the device's Apple receipt to the new user
+      const { customerInfo } = await Purchases.logIn(userId);
+      console.log('✅ RevenueCat switched to user:', userId);
+      console.log('   Entitlements:', Object.keys(customerInfo.entitlements.active));
     }
-
-    console.log('✅ RevenueCat initialized for user:', userId);
   } catch (error) {
     console.error('❌ RevenueCat initialization failed:', error);
     throw error;
+  }
+}
+
+/**
+ * Log out the current RevenueCat user
+ * Call this when the app user signs out to prevent entitlement leaking
+ * between accounts on the same device.
+ */
+export async function logOutRevenueCat(): Promise<void> {
+  try {
+    if (!isConfigured) return;
+    
+    await Purchases.logOut();
+    console.log('✅ RevenueCat user logged out (reset to anonymous)');
+  } catch (error) {
+    // Don't throw — logout should be best-effort
+    console.warn('⚠️ RevenueCat logOut failed:', error);
   }
 }
 

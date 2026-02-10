@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import type { User, Session } from '@supabase/supabase-js';
 import { signIn, signUp, signOut, getSession, onAuthStateChange } from '../auth';
 import { signInWithApple as appleSignIn } from '../apple-auth';
+import { logOutRevenueCat } from '../revenuecat';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface AuthState {
   user: User | null;
@@ -185,11 +187,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   /**
    * Sign out current user
+   * Clears RevenueCat user, AI message count, and Supabase session
    */
   logout: async () => {
     set({ isLoading: true, error: null });
 
     try {
+      // Log out RevenueCat BEFORE clearing the session
+      // This prevents entitlement leaking to the next user on this device
+      await logOutRevenueCat();
+
+      // Clear per-user local data (AI message count, etc.)
+      await AsyncStorage.multiRemove(['ai_messages']).catch(() => {});
+
       const { error } = await signOut();
 
       if (error) {

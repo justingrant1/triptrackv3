@@ -11,6 +11,7 @@ import { useAllReceipts } from './useReceipts';
 import { supabase } from '@/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { checkProEntitlement } from '@/lib/revenuecat';
+import { useAuthStore } from '@/lib/state/auth-store';
 
 export type Plan = 'free' | 'pro' | 'team';
 
@@ -111,6 +112,7 @@ export async function incrementAIMessageCount(): Promise<void> {
  * Main subscription hook
  */
 export function useSubscription() {
+  const { user } = useAuthStore();
   const { data: profile } = useProfile();
   const { data: trips = [] } = useTrips();
   const { data: allReceipts = [] } = useAllReceipts();
@@ -170,11 +172,12 @@ export function useSubscription() {
   const canConnectGmail = limits.gmailConnect;
 
   // Check RevenueCat entitlement as fallback (in case Supabase is out of sync)
+  // Query key includes user ID so it's scoped per-user and doesn't leak across accounts
   const { data: hasProEntitlement } = useQuery({
-    queryKey: ['revenuecat-entitlement'],
+    queryKey: ['revenuecat-entitlement', user?.id],
     queryFn: checkProEntitlement,
     staleTime: 5 * 60 * 1000, // 5 minutes
-    enabled: plan === 'free', // Only check if Supabase says free
+    enabled: plan === 'free' && !!user?.id, // Only check if Supabase says free AND user is logged in
   });
 
   // Determine if user has Pro (check both Supabase and RevenueCat)
