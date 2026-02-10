@@ -67,7 +67,10 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
     const depName = depAirport?.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-–]\s*/, '') || null;
     const arrName = arrAirport?.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-–]\s*/, '') || null;
 
-    const flightStatus = showFlightStatus ? getStoredFlightStatus(reservation) : null;
+    // Always get live flight status for detail rows (gate, terminal, etc.)
+    const liveFlightStatus = getStoredFlightStatus(reservation);
+    // Only show the FlightStatusBar component if requested
+    const showFlightStatusBar = showFlightStatus ? liveFlightStatus : null;
 
     return (
       <View className={compact ? 'py-2' : 'px-4 py-3'}>
@@ -116,9 +119,9 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
         )}
 
         {/* Flight Status Bar */}
-        {flightStatus && (
+        {showFlightStatusBar && (
           <View className="mb-3">
-            <FlightStatusBar status={flightStatus} compact={compact} />
+            <FlightStatusBar status={showFlightStatusBar} compact={compact} />
           </View>
         )}
 
@@ -140,13 +143,21 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
           </Pressable>
         )}
 
-        {/* Flight details */}
-        <DetailRow label="Flight" value={d['Flight Number'] || d['Flight']} mono />
-        <DetailRow label="Airline" value={d['Airline']} />
-        <DetailRow label="Class" value={d['Class']} />
+        {/* Flight details — grouped: departure → arrival → personal */}
+        <DetailRow label="Flight" value={liveFlightStatus?.flight_iata || d['Flight Number'] || d['Flight']} mono />
+        <DetailRow label="Airline" value={liveFlightStatus?.airline_name || d['Airline']} />
+
+        {/* Departure info */}
+        <DetailRow label="Dep. Gate" value={liveFlightStatus?.dep_gate || d['Gate']} mono />
+        <DetailRow label="Dep. Terminal" value={liveFlightStatus?.dep_terminal || d['Terminal']} />
+
+        {/* Arrival info — sourced from live flight status, falling back to static details */}
+        <DetailRow label="Arr. Gate" value={liveFlightStatus?.arr_gate || d['Arrival Gate']} mono />
+        <DetailRow label="Arr. Terminal" value={liveFlightStatus?.arr_terminal || d['Arrival Terminal']} />
+
+        {/* Personal / booking details */}
         <DetailRow label="Seat" value={d['Seat']} mono />
-        <DetailRow label="Gate" value={d['Gate']} mono />
-        {d['Terminal'] && <DetailRow label="Terminal" value={d['Terminal']} />}
+        <DetailRow label="Class" value={d['Class']} />
         {d['Baggage'] && <DetailRow label={/food|meal|snack|purchase/i.test(d['Baggage']) ? 'Meals' : 'Baggage'} value={d['Baggage']} />}
         {d['Duration'] && <DetailRow label="Duration" value={d['Duration']} />}
         {d['Aircraft'] && <DetailRow label="Aircraft" value={d['Aircraft']} />}

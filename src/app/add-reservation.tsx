@@ -38,7 +38,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { useQueryClient } from '@tanstack/react-query';
 import { useTrip } from '@/lib/hooks/useTrips';
 import { useCreateReservation } from '@/lib/hooks/useReservations';
-import { checkFlightStatusForTrip } from '@/lib/flight-status';
+import { checkFlightStatusForTrip, extractFlightNumber } from '@/lib/flight-status';
 import type { Reservation } from '@/lib/types/database';
 
 type ReservationType = Reservation['type'];
@@ -182,8 +182,13 @@ export default function AddReservationScreen() {
       // Build details object — for flights, include the flight number so the
       // edge function can look it up via AirLabs
       const details: Record<string, any> = {};
-      if (selectedType === 'flight' && title.trim()) {
-        details['Flight Number'] = title.trim().toUpperCase();
+      // For flights, normalize the title: "Aa 205" → "AA205"
+      const normalizedTitle = selectedType === 'flight'
+        ? (extractFlightNumber(title.trim()) || title.trim().toUpperCase())
+        : title.trim();
+
+      if (selectedType === 'flight' && normalizedTitle) {
+        details['Flight Number'] = normalizedTitle;
         if (subtitle.trim()) {
           // Parse route like "SFO → JFK" or "SFO - JFK"
           const routeMatch = subtitle.trim().match(/([A-Z]{3})\s*[→\-–>to]+\s*([A-Z]{3})/i);
@@ -197,7 +202,7 @@ export default function AddReservationScreen() {
       await createReservation.mutateAsync({
         trip_id: tripId,
         type: selectedType,
-        title: title.trim(),
+        title: normalizedTitle,
         subtitle: subtitle.trim() || null,
         start_time: startDateTime.toISOString(),
         end_time: endDateTime ? endDateTime.toISOString() : null,
@@ -354,6 +359,7 @@ export default function AddReservationScreen() {
                   placeholderTextColor="#64748B"
                   className="text-white text-base flex-1 ml-3"
                   style={{ fontFamily: 'DMSans_400Regular' }}
+                  autoCapitalize={selectedType === 'flight' ? 'characters' : 'sentences'}
                 />
               </View>
             </Animated.View>

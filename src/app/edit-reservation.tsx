@@ -8,6 +8,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useReservation, useUpdateReservation } from '@/lib/hooks/useReservations';
+import { extractFlightNumber } from '@/lib/flight-status';
 import type { Reservation } from '@/lib/types/database';
 
 type ReservationType = Reservation['type'];
@@ -61,12 +62,17 @@ export default function EditReservationScreen() {
       return;
     }
 
+    // For flights, normalize the title: "Aa 205" → "AA205"
+    const normalizedTitle = type === 'flight'
+      ? (extractFlightNumber(title.trim()) || title.trim().toUpperCase())
+      : title.trim();
+
     try {
       await updateReservation.mutateAsync({
         id,
         updates: {
           type,
-          title: title.trim(),
+          title: normalizedTitle,
           subtitle: subtitle.trim() || null,
           start_time: startTime.toISOString(),
           end_time: endTime?.toISOString() || null,
@@ -201,6 +207,7 @@ export default function EditReservationScreen() {
                 placeholderTextColor="#64748B"
                 className="bg-slate-800/80 rounded-xl px-4 py-4 text-white border border-slate-700/50"
                 style={{ fontFamily: 'DMSans_400Regular', fontSize: 16 }}
+                autoCapitalize={type === 'flight' ? 'characters' : 'sentences'}
               />
             </View>
 
