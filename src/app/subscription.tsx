@@ -15,7 +15,7 @@ import {
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useProfile } from '@/lib/hooks/useProfile';
-import { getOfferings, purchasePackage, restorePurchases, getPackageDetails } from '@/lib/revenuecat';
+import { getOfferings, purchasePackage, restorePurchases, getPackageDetails, getCustomerInfo } from '@/lib/revenuecat';
 import { PurchasesPackage } from 'react-native-purchases';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -337,6 +337,31 @@ export default function SubscriptionScreen() {
     setIsPurchasing(true);
 
     try {
+      // ── Pre-check: does this Apple ID already have an active TripTrack Pro subscription?
+      // If so, restore it instead of triggering a new purchase (avoids Apple's
+      // "You're currently subscribed to this" dialog).
+      const customerInfo = await getCustomerInfo();
+      const alreadyHasPro =
+        customerInfo?.entitlements?.active?.['TripTrack Pro'] !== undefined;
+
+      if (alreadyHasPro) {
+        console.log('🔄 Apple ID already has TripTrack Pro — restoring instead of purchasing');
+        await restorePurchases();
+
+        // Refresh profile to get updated plan
+        queryClient.invalidateQueries({ queryKey: ['profile'] });
+        queryClient.invalidateQueries({ queryKey: ['revenuecat-entitlement'] });
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert(
+          '🎉 Welcome to Pro!',
+          'Your existing TripTrack Pro subscription has been linked to this account.',
+          [{ text: 'Awesome!', onPress: () => router.back() }]
+        );
+        return;
+      }
+
+      // ── Normal purchase flow
       console.log('💳 Purchasing package:', {
         identifier: selectedPackage.identifier,
         price: selectedPackage.product.priceString,
@@ -346,6 +371,7 @@ export default function SubscriptionScreen() {
       
       // Refresh profile to get updated plan
       queryClient.invalidateQueries({ queryKey: ['profile'] });
+      queryClient.invalidateQueries({ queryKey: ['revenuecat-entitlement'] });
       
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
