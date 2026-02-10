@@ -17,6 +17,11 @@ import {
   Edit3,
   Search,
   X,
+  Sparkles,
+  Lock,
+  CheckCircle2,
+  PenLine,
+  Send,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -35,6 +40,10 @@ import * as Haptics from 'expo-haptics';
 import { useTrips, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservationCounts } from '@/lib/hooks/useReservations';
 import { useConnectedAccounts, useSyncGmail } from '@/lib/hooks/useConnectedAccounts';
+import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useForwardingAddress } from '@/lib/hooks/useProfile';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import * as Clipboard from 'expo-clipboard';
 import type { Trip } from '@/lib/types/database';
 import { formatDateRange, getDaysUntil } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
@@ -717,7 +726,11 @@ export default function TripsScreen() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [showSearch, setShowSearch] = React.useState(false);
   const [showOfflineToast, setShowOfflineToast] = React.useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
   const hasAutoSynced = React.useRef(false);
+  const { isPro } = useSubscription();
+  const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
+  const hasGmailConnected = (connectedAccounts ?? []).some((a: any) => a.provider === 'gmail');
 
   // Determine if we should suppress the error and show cached data instead
   const hasCachedData = trips.length > 0;
@@ -973,36 +986,230 @@ export default function TripsScreen() {
             </View>
           )}
 
-          {/* Empty State */}
-          {!isLoading && !error && featuredTrips.length === 0 && (
+          {/* Empty State — Search */}
+          {!isLoading && !error && featuredTrips.length === 0 && !!searchQuery && (
             <Animated.View
               entering={FadeInDown.duration(600)}
               className="mx-5 bg-slate-800/30 rounded-3xl p-8 items-center border border-slate-700/30"
             >
               <View className="bg-slate-700/30 p-4 rounded-full mb-4">
-                {searchQuery ? <Search size={32} color="#64748B" /> : <Plane size={32} color="#64748B" />}
+                <Search size={32} color="#64748B" />
               </View>
               <Text className="text-slate-300 text-lg font-semibold text-center" style={{ fontFamily: 'DMSans_700Bold' }}>
-                {searchQuery ? 'No trips found' : 'No upcoming trips'}
+                No trips found
               </Text>
               <Text className="text-slate-500 text-sm text-center mt-2 px-4" style={{ fontFamily: 'DMSans_400Regular' }}>
-                {searchQuery 
-                  ? `No trips match "${searchQuery}"`
-                  : 'Forward your flight, hotel, and travel confirmation emails to get started'
-                }
+                {`No trips match "${searchQuery}"`}
               </Text>
-              {!searchQuery && (
+            </Animated.View>
+          )}
+
+          {/* Empty State — Onboarding Pathways */}
+          {!isLoading && !error && featuredTrips.length === 0 && !searchQuery && (
+            <View className="px-5">
+              {/* Hero */}
+              <Animated.View
+                entering={FadeInDown.duration(500).delay(0)}
+                className="items-center mb-6"
+              >
+                <View
+                  className="w-16 h-16 rounded-full items-center justify-center mb-4"
+                  style={{ backgroundColor: 'rgba(59,130,246,0.15)' }}
+                >
+                  <Plane size={28} color="#3B82F6" />
+                </View>
+                <Text className="text-white text-xl font-bold text-center" style={{ fontFamily: 'DMSans_700Bold' }}>
+                  Add Your First Trip
+                </Text>
+                <Text className="text-slate-400 text-sm text-center mt-1.5 px-6" style={{ fontFamily: 'DMSans_400Regular' }}>
+                  Choose how you'd like to get started
+                </Text>
+              </Animated.View>
+
+              {/* Card 1: Connect Gmail (recommended for Pro) */}
+              <Animated.View entering={FadeInDown.duration(400).delay(80)}>
+                {!hasGmailConnected ? (
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      if (user && isPro) {
+                        router.push('/connected-accounts');
+                      } else if (user) {
+                        setShowUpgradeModal(true);
+                      } else {
+                        router.push('/login');
+                      }
+                    }}
+                    className="rounded-2xl p-4 mb-3 border"
+                    style={{
+                      backgroundColor: 'rgba(59,130,246,0.08)',
+                      borderColor: 'rgba(59,130,246,0.25)',
+                    }}
+                  >
+                    <View className="flex-row items-center">
+                      <View className="p-2.5 rounded-xl" style={{ backgroundColor: 'rgba(59,130,246,0.2)' }}>
+                        <Mail size={22} color="#3B82F6" />
+                      </View>
+                      <View className="flex-1 ml-3">
+                        <View className="flex-row items-center">
+                          <Text className="text-blue-400 font-bold text-base" style={{ fontFamily: 'DMSans_700Bold' }}>
+                            Connect Gmail
+                          </Text>
+                          {(!user || !isPro) && (
+                            <View className="bg-amber-500/20 px-2 py-0.5 rounded-full ml-2">
+                              <Text className="text-amber-400 text-xs font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                                PRO
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                          {!user
+                            ? 'Sign in to auto-scan your travel emails'
+                            : !isPro
+                              ? 'Upgrade to Pro to auto-scan your inbox'
+                              : 'Auto-scan your inbox for travel bookings'}
+                        </Text>
+                      </View>
+                      {!user || !isPro ? (
+                        <Lock size={16} color="#64748B" />
+                      ) : (
+                        <ChevronRight size={18} color="#3B82F6" />
+                      )}
+                    </View>
+                  </Pressable>
+                ) : (
+                  <View
+                    className="rounded-2xl p-4 mb-3 border"
+                    style={{
+                      backgroundColor: 'rgba(16,185,129,0.08)',
+                      borderColor: 'rgba(16,185,129,0.25)',
+                    }}
+                  >
+                    <View className="flex-row items-center">
+                      <View className="p-2.5 rounded-xl" style={{ backgroundColor: 'rgba(16,185,129,0.2)' }}>
+                        <CheckCircle2 size={22} color="#10B981" />
+                      </View>
+                      <View className="flex-1 ml-3">
+                        <Text className="text-emerald-400 font-bold text-base" style={{ fontFamily: 'DMSans_700Bold' }}>
+                          Gmail Connected
+                        </Text>
+                        <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                          Your travel emails are being auto-scanned
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+              </Animated.View>
+
+              {/* Card 2: AI Email Parser */}
+              <Animated.View entering={FadeInDown.duration(400).delay(160)}>
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push('/parse-email');
+                  }}
+                  className="rounded-2xl p-4 mb-3 border"
+                  style={{
+                    backgroundColor: 'rgba(168,85,247,0.08)',
+                    borderColor: 'rgba(168,85,247,0.25)',
+                  }}
+                >
+                  <View className="flex-row items-center">
+                    <View className="p-2.5 rounded-xl" style={{ backgroundColor: 'rgba(168,85,247,0.2)' }}>
+                      <Sparkles size={22} color="#A855F7" />
+                    </View>
+                    <View className="flex-1 ml-3">
+                      <Text className="text-purple-400 font-bold text-base" style={{ fontFamily: 'DMSans_700Bold' }}>
+                        AI Email Parser
+                      </Text>
+                      <Text className="text-slate-400 text-sm mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                        Paste a confirmation email — AI extracts the trip
+                      </Text>
+                    </View>
+                    <ChevronRight size={18} color="#A855F7" />
+                  </View>
+                </Pressable>
+              </Animated.View>
+
+              {/* Card 3: Forward Emails */}
+              <Animated.View entering={FadeInDown.duration(400).delay(240)}>
+                <View
+                  className="rounded-2xl p-4 mb-3 border"
+                  style={{
+                    backgroundColor: 'rgba(20,184,166,0.06)',
+                    borderColor: 'rgba(20,184,166,0.2)',
+                  }}
+                >
+                  <View className="flex-row items-start">
+                    <View className="p-2.5 rounded-xl" style={{ backgroundColor: 'rgba(20,184,166,0.15)' }}>
+                      <Send size={20} color="#14B8A6" />
+                    </View>
+                    <View className="flex-1 ml-3">
+                      <Text className="text-teal-400 font-bold text-sm" style={{ fontFamily: 'DMSans_700Bold' }}>
+                        Forward an Email
+                      </Text>
+                      <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                        Forward travel confirmations to your unique address
+                      </Text>
+                      {loadingAddress ? (
+                        <View className="bg-slate-800/60 rounded-lg px-3 py-1.5 mt-2">
+                          <ActivityIndicator size="small" color="#14B8A6" />
+                        </View>
+                      ) : forwardingAddress ? (
+                        <Pressable
+                          onPress={async () => {
+                            await Clipboard.setStringAsync(forwardingAddress);
+                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                            Alert.alert('Copied!', 'Forwarding address copied to clipboard');
+                          }}
+                          className="bg-slate-800/60 rounded-lg px-3 py-1.5 mt-2 flex-row items-center justify-between"
+                        >
+                          <Text
+                            className="text-teal-400 text-xs flex-1"
+                            style={{ fontFamily: 'SpaceMono_400Regular' }}
+                            numberOfLines={1}
+                          >
+                            {forwardingAddress}
+                          </Text>
+                          <Text className="text-slate-600 text-xs ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
+                            Copy
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  </View>
+                </View>
+              </Animated.View>
+
+              {/* Card 4: Create Manually */}
+              <Animated.View entering={FadeInDown.duration(400).delay(320)}>
                 <Pressable
                   onPress={handleAddTrip}
-                  className="mt-4 bg-blue-500 px-5 py-2.5 rounded-full flex-row items-center"
+                  className="rounded-2xl p-4 mb-3 border"
+                  style={{
+                    backgroundColor: 'rgba(100,116,139,0.08)',
+                    borderColor: 'rgba(100,116,139,0.2)',
+                  }}
                 >
-                  <Mail size={16} color="#FFFFFF" />
-                  <Text className="text-white font-semibold ml-2" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    How to Add Trips
-                  </Text>
+                  <View className="flex-row items-center">
+                    <View className="p-2.5 rounded-xl" style={{ backgroundColor: 'rgba(100,116,139,0.15)' }}>
+                      <PenLine size={20} color="#94A3B8" />
+                    </View>
+                    <View className="flex-1 ml-3">
+                      <Text className="text-slate-300 font-bold text-sm" style={{ fontFamily: 'DMSans_700Bold' }}>
+                        Create Manually
+                      </Text>
+                      <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                        Enter trip details yourself
+                      </Text>
+                    </View>
+                    <ChevronRight size={18} color="#64748B" />
+                  </View>
                 </Pressable>
-              )}
-            </Animated.View>
+              </Animated.View>
+            </View>
           )}
 
           {/* Past Trips — show even when offline if we have cached data */}
@@ -1025,6 +1232,13 @@ export default function TripsScreen() {
       <OfflineToast
         visible={showOfflineToast}
         onDismiss={() => setShowOfflineToast(false)}
+      />
+
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        visible={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        reason="trips"
       />
     </View>
   );

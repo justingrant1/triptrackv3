@@ -25,6 +25,11 @@ import {
   Check,
   ChevronRight,
   X,
+  Mail,
+  Sparkles,
+  Link2,
+  Lock,
+  CheckCircle2,
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
@@ -32,6 +37,7 @@ import { useCreateTrip } from '@/lib/hooks/useTrips';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useForwardingAddress } from '@/lib/hooks/useProfile';
+import { useConnectedAccounts } from '@/lib/hooks/useConnectedAccounts';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Clipboard from 'expo-clipboard';
@@ -59,8 +65,12 @@ export default function AddTripScreen() {
   const router = useRouter();
   const createTrip = useCreateTrip();
   const { user } = useAuthStore();
-  const { canCreateTrip } = useSubscription();
+  const { canCreateTrip, isPro } = useSubscription();
   const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
+  const { data: connectedAccounts = [] } = useConnectedAccounts();
+
+  // Check if Gmail is already connected
+  const hasGmailConnected = connectedAccounts.some(a => a.provider === 'gmail');
 
   const [tripName, setTripName] = React.useState('');
   const [destination, setDestination] = React.useState('');
@@ -404,49 +414,162 @@ export default function AddTripScreen() {
               </Text>
             </Animated.View>
 
-            {/* Forwarding Address Box */}
+            {/* ─── Auto-Import Section ─────────────────────────────── */}
             <Animated.View entering={FadeInDown.duration(400).delay(200)}>
-              <View className="bg-blue-500/10 rounded-2xl p-4 mt-6 border border-blue-500/20">
-                <View className="flex-row items-start">
-                  <ImageIcon size={20} color="#3B82F6" />
-                  <View className="flex-1 ml-3">
-                    <Text
-                      className="text-blue-400 font-semibold"
-                      style={{ fontFamily: 'DMSans_700Bold' }}
-                    >
-                      Auto-Add Trips via Email
-                    </Text>
-                    <Text
-                      className="text-slate-400 text-sm mt-1"
-                      style={{ fontFamily: 'DMSans_400Regular' }}
-                    >
-                      Forward your travel confirmation emails to:
-                    </Text>
-                    {loadingAddress ? (
-                      <View className="bg-slate-800/60 rounded-xl px-3 py-2 mt-2">
-                        <ActivityIndicator size="small" color="#3B82F6" />
-                      </View>
-                    ) : forwardingAddress ? (
-                      <Pressable
-                        onPress={async () => {
-                          await Clipboard.setStringAsync(forwardingAddress);
-                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                          Alert.alert('Copied!', 'Forwarding address copied to clipboard');
-                        }}
-                        className="bg-slate-800/60 rounded-xl px-3 py-2 mt-2 flex-row items-center justify-between"
+              <View className="mt-6 mb-2">
+                <Text
+                  className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-3"
+                  style={{ fontFamily: 'SpaceMono_400Regular' }}
+                >
+                  Or auto-import trips
+                </Text>
+
+                {/* Option 1: AI Email Parser */}
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push('/parse-email');
+                  }}
+                  className="bg-purple-500/10 rounded-2xl p-4 border border-purple-500/20 mb-3"
+                >
+                  <View className="flex-row items-center">
+                    <View className="bg-purple-500/20 p-2.5 rounded-xl">
+                      <Sparkles size={20} color="#A855F7" />
+                    </View>
+                    <View className="flex-1 ml-3">
+                      <Text
+                        className="text-purple-400 font-semibold text-base"
+                        style={{ fontFamily: 'DMSans_700Bold' }}
                       >
+                        AI Email Parser
+                      </Text>
+                      <Text
+                        className="text-slate-400 text-sm mt-0.5"
+                        style={{ fontFamily: 'DMSans_400Regular' }}
+                      >
+                        Paste a confirmation email and we'll extract the trip
+                      </Text>
+                    </View>
+                    <ChevronRight size={18} color="#A855F7" />
+                  </View>
+                </Pressable>
+
+                {/* Option 2: Connect Gmail — conditional */}
+                {!hasGmailConnected && (
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      if (user && isPro) {
+                        router.push('/connected-accounts');
+                      } else if (user) {
+                        setShowUpgradeModal(true);
+                      } else {
+                        router.push('/login');
+                      }
+                    }}
+                    className="bg-blue-500/10 rounded-2xl p-4 border border-blue-500/20 mb-3"
+                  >
+                    <View className="flex-row items-center">
+                      <View className="bg-blue-500/20 p-2.5 rounded-xl">
+                        <Mail size={20} color="#3B82F6" />
+                      </View>
+                      <View className="flex-1 ml-3">
                         <Text
-                          className="text-blue-400 text-sm font-mono flex-1"
-                          style={{ fontFamily: 'SpaceMono_400Regular' }}
-                          numberOfLines={1}
+                          className="text-blue-400 font-semibold text-base"
+                          style={{ fontFamily: 'DMSans_700Bold' }}
                         >
-                          {forwardingAddress}
+                          Connect Gmail
                         </Text>
-                        <Text className="text-slate-500 text-xs ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
-                          Tap to copy
+                        <Text
+                          className="text-slate-400 text-sm mt-0.5"
+                          style={{ fontFamily: 'DMSans_400Regular' }}
+                        >
+                          {!user
+                            ? 'Sign in to auto-scan your travel emails'
+                            : !isPro
+                              ? 'Upgrade to Pro to auto-scan your inbox'
+                              : 'Auto-scan your inbox for travel bookings'}
                         </Text>
-                      </Pressable>
-                    ) : null}
+                      </View>
+                      {!user || !isPro ? (
+                        <Lock size={16} color="#64748B" />
+                      ) : (
+                        <ChevronRight size={18} color="#3B82F6" />
+                      )}
+                    </View>
+                  </Pressable>
+                )}
+
+                {/* Gmail connected — show success state */}
+                {hasGmailConnected && (
+                  <View className="bg-emerald-500/10 rounded-2xl p-4 border border-emerald-500/20 mb-3">
+                    <View className="flex-row items-center">
+                      <View className="bg-emerald-500/20 p-2.5 rounded-xl">
+                        <CheckCircle2 size={20} color="#10B981" />
+                      </View>
+                      <View className="flex-1 ml-3">
+                        <Text
+                          className="text-emerald-400 font-semibold text-base"
+                          style={{ fontFamily: 'DMSans_700Bold' }}
+                        >
+                          Gmail Connected
+                        </Text>
+                        <Text
+                          className="text-slate-400 text-sm mt-0.5"
+                          style={{ fontFamily: 'DMSans_400Regular' }}
+                        >
+                          Your travel emails are being auto-scanned
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* Option 3: Email Forwarding */}
+                <View className="bg-slate-800/40 rounded-2xl p-4 border border-slate-700/30">
+                  <View className="flex-row items-start">
+                    <View className="bg-slate-700/40 p-2.5 rounded-xl">
+                      <Mail size={18} color="#94A3B8" />
+                    </View>
+                    <View className="flex-1 ml-3">
+                      <Text
+                        className="text-slate-300 font-semibold text-sm"
+                        style={{ fontFamily: 'DMSans_700Bold' }}
+                      >
+                        Forward Emails
+                      </Text>
+                      <Text
+                        className="text-slate-500 text-xs mt-0.5"
+                        style={{ fontFamily: 'DMSans_400Regular' }}
+                      >
+                        Forward travel confirmations to:
+                      </Text>
+                      {loadingAddress ? (
+                        <View className="bg-slate-800/60 rounded-lg px-3 py-1.5 mt-2">
+                          <ActivityIndicator size="small" color="#3B82F6" />
+                        </View>
+                      ) : forwardingAddress ? (
+                        <Pressable
+                          onPress={async () => {
+                            await Clipboard.setStringAsync(forwardingAddress);
+                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                            Alert.alert('Copied!', 'Forwarding address copied to clipboard');
+                          }}
+                          className="bg-slate-800/60 rounded-lg px-3 py-1.5 mt-2 flex-row items-center justify-between"
+                        >
+                          <Text
+                            className="text-blue-400 text-xs flex-1"
+                            style={{ fontFamily: 'SpaceMono_400Regular' }}
+                            numberOfLines={1}
+                          >
+                            {forwardingAddress}
+                          </Text>
+                          <Text className="text-slate-600 text-xs ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
+                            Copy
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
                   </View>
                 </View>
               </View>

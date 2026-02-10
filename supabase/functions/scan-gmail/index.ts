@@ -798,7 +798,8 @@ async function isMessageProcessed(
 
 /**
  * Check if a reservation already exists (duplicate detection).
- * First checks by confirmation_number, then by type + start_time.
+ * Uses multiple strategies to catch duplicates from different emails
+ * about the same booking (confirmation, check-in, boarding pass, etc.).
  */
 async function isDuplicateReservation(
   supabase: any,
@@ -808,8 +809,6 @@ async function isDuplicateReservation(
   const reservationType = parsed.type === 'car_rental' ? 'car' : parsed.type;
 
   // Check 1: Same type + same start_time in same trip (most precise)
-  // This correctly handles multi-leg flights with the same confirmation number
-  // but different departure times
   if (parsed.start_time) {
     const { data: byTypeAndTime } = await supabase
       .from('reservations')
@@ -822,8 +821,79 @@ async function isDuplicateReservation(
     if (byTypeAndTime) return true;
   }
 
-  // Check 2: Same confirmation number + same title (for non-flight types)
-  // For flights, we skip this check since multiple legs share the same confirmation
+  // Check 2: FLIGHT-SPECIFIC — same flight number in same trip
+  // This is the key dedup check: booking confirmation, check-in email,
+  // and boarding pass all reference the same flight number (e.g., "AA 1531")
+  // but may report slightly different times.
+  if (parsed.type === 'flight') {
+    const flightNumber = parsed.details?.['Flight Number'];
+    if (flightNumber) {
+      // Normalize flight number: strip spaces, uppercase (e.g., "AA 1531" → "AA1531")
+      const normalizedFlightNum = flightNumber.toString().replace(/\s+/g, '').toUpperCase();
+
+      // Get all flight reservations in this trip
+      const { data: existingFlights } = await supabase
+        .from('reservations')
+        .select('id, details, start_time')
+        .eq('trip_id', tripId)
+        .eq('type', 'flight');
+
+      if (existingFlights && existingFlights.length > 0) {
+        for (const existing of existingFlights) {
+          const existingFlightNum = existing.details?.['Flight Number'];
+          if (existingFlightNum) {
+            const normalizedExisting = existingFlightNum.toString().replace(/\s+/g, '').toUpperCase();
+            if (normalizedFlightNum === normalizedExisting) {
+              console.log(`Duplicate flight detected by flight number: ${flightNumber} (existing: ${existing.id})`);
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    // Check 2b: FLIGHT fuzzy match — same route on same day
+    // Catches cases where flight number is missing or formatted differently
+    // by comparing departure/arrival airports + same calendar day
+    if (parsed.start_time && parsed.details) {
+      const depAirport = parsed.details['Departure Airport'];
+      const arrAirport = parsed.details['Arrival Airport'];
+
+      if (depAirport && arrAirport) {
+        const parsedDate = new Date(parsed.start_time);
+        const dayStart = new Date(parsedDate);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(parsedDate);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const { data: sameDayFlights } = await supabase
+          .from('reservations')
+          .select('id, details, start_time')
+          .eq('trip_id', tripId)
+          .eq('type', 'flight')
+          .gte('start_time', dayStart.toISOString())
+          .lte('start_time', dayEnd.toISOString());
+
+        if (sameDayFlights && sameDayFlights.length > 0) {
+          const normalizedDep = depAirport.toString().toUpperCase().trim();
+          const normalizedArr = arrAirport.toString().toUpperCase().trim();
+
+          for (const existing of sameDayFlights) {
+            const existingDep = existing.details?.['Departure Airport']?.toString().toUpperCase().trim();
+            const existingArr = existing.details?.['Arrival Airport']?.toString().toUpperCase().trim();
+
+            if (existingDep === normalizedDep && existingArr === normalizedArr) {
+              console.log(`Duplicate flight detected by route+date: ${depAirport}→${arrAirport} on ${parsedDate.toDateString()} (existing: ${existing.id})`);
+              return true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Check 3: Same confirmation number (for non-flight types)
+  // For flights, we skip this since multiple legs share the same confirmation
   if (parsed.confirmation_number && parsed.type !== 'flight') {
     const { data: byConfirmation } = await supabase
       .from('reservations')
