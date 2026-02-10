@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, ScrollView, Pressable, Linking } from 'react-native';
+import React, { useCallback } from 'react';
+import { View, Text, ScrollView, Pressable, Linking, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -104,13 +104,20 @@ function MenuItem({
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
-  const { data: profile } = useProfile();
-  const { data: connectedAccounts } = useConnectedAccounts();
-  const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
+  const { data: profile, refetch: refetchProfile } = useProfile();
+  const { data: connectedAccounts, refetch: refetchAccounts } = useConnectedAccounts();
+  const { data: forwardingAddress, isLoading: loadingAddress, refetch: refetchAddress } = useForwardingAddress();
   const [copied, setCopied] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
   const copyScale = useSharedValue(1);
   
   const connectedCount = connectedAccounts?.length || 0;
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([refetchProfile(), refetchAccounts(), refetchAddress()]);
+    setRefreshing(false);
+  }, [refetchProfile, refetchAccounts, refetchAddress]);
 
   const handleSignOut = () => {
     Alert.alert(
@@ -215,7 +222,17 @@ export default function ProfileScreen() {
       />
 
       <SafeAreaView className="flex-1" edges={['top']}>
-        <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        <ScrollView
+          className="flex-1"
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#3b82f6"
+            />
+          }
+        >
           {/* Header */}
           <Animated.View
             entering={FadeInDown.duration(500)}

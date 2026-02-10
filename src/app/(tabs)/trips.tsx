@@ -33,10 +33,13 @@ import Animated, {
   useSharedValue,
   withSpring,
   withTiming,
+  withRepeat,
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
+import { useFocusEffect } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTrips, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservationCounts } from '@/lib/hooks/useReservations';
 import { useConnectedAccounts, useSyncGmail } from '@/lib/hooks/useConnectedAccounts';
@@ -62,12 +65,7 @@ function TripCardSkeleton({ index }: { index: number }) {
   const shimmer = useSharedValue(0);
 
   React.useEffect(() => {
-    shimmer.value = withTiming(1, { duration: 1500 });
-    const interval = setInterval(() => {
-      shimmer.value = 0;
-      shimmer.value = withTiming(1, { duration: 1500 });
-    }, 1500);
-    return () => clearInterval(interval);
+    shimmer.value = withRepeat(withTiming(1, { duration: 1500 }), -1, true);
   }, []);
 
   const shimmerStyle = useAnimatedStyle(() => ({
@@ -103,12 +101,7 @@ function CompactTripCardSkeleton({ index }: { index: number }) {
   const shimmer = useSharedValue(0);
 
   React.useEffect(() => {
-    shimmer.value = withTiming(1, { duration: 1500 });
-    const interval = setInterval(() => {
-      shimmer.value = 0;
-      shimmer.value = withTiming(1, { duration: 1500 });
-    }, 1500);
-    return () => clearInterval(interval);
+    shimmer.value = withRepeat(withTiming(1, { duration: 1500 }), -1, true);
   }, []);
 
   const shimmerStyle = useAnimatedStyle(() => ({
@@ -730,7 +723,15 @@ export default function TripsScreen() {
   const hasAutoSynced = React.useRef(false);
   const { isPro } = useSubscription();
   const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
+  const queryClient = useQueryClient();
   const hasGmailConnected = (connectedAccounts ?? []).some((a: any) => a.provider === 'gmail');
+
+  // Refetch trips when screen gains focus (e.g. returning from add/edit)
+  useFocusEffect(
+    React.useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ['trips'] });
+    }, [queryClient])
+  );
 
   // Determine if we should suppress the error and show cached data instead
   const hasCachedData = trips.length > 0;
@@ -855,6 +856,7 @@ export default function TripsScreen() {
         <ScrollView
           className="flex-1"
           showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

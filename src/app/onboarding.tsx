@@ -27,6 +27,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuthStore } from '@/lib/state/auth-store';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -517,8 +518,13 @@ export default function OnboardingScreen() {
     // Mark onboarding as complete
     await AsyncStorage.setItem('onboarding_complete', 'true');
 
-    // Navigate to login
-    router.replace('/login');
+    // If already authenticated (e.g. signed up via Apple Sign-In), go straight to tabs
+    const currentUser = useAuthStore.getState().user;
+    if (currentUser) {
+      router.replace('/(tabs)');
+    } else {
+      router.replace('/login');
+    }
   };
 
   const isLastSlide = currentIndex === slides.length - 1;

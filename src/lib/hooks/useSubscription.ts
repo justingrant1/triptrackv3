@@ -118,11 +118,12 @@ export function useSubscription() {
   const plan: Plan = profile?.plan || 'free';
   const limits = PLAN_LIMITS[plan];
 
-  // Query AI message count
+  // Query AI message count — no aggressive polling needed.
+  // The count is updated reactively via queryClient.setQueryData in modal.tsx
   const { data: aiMessagesToday = 0 } = useQuery({
     queryKey: ['ai-messages-today'],
     queryFn: getAIMessageCount,
-    refetchInterval: 1000, // Check every second for updates
+    staleTime: 60 * 1000, // Consider fresh for 1 minute
   });
 
   // Calculate usage stats

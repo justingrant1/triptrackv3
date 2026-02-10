@@ -5,8 +5,10 @@ export interface Profile {
   name: string | null;
   email: string | null;
   forwarding_email: string | null;
+  forwarding_token: string | null;
   avatar_url: string | null;
   plan: 'free' | 'pro' | 'team';
+  push_token: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,3 +97,14 @@ export type ReceiptUpdate = Partial<ReceiptInsert>;
 
 export type ConnectedAccountInsert = Omit<ConnectedAccount, 'id' | 'created_at' | 'updated_at' | 'user_id'>;
 export type ConnectedAccountUpdate = Partial<ConnectedAccountInsert>;
+
+// Convenience type aliases
+export type ReservationType = Reservation['type'];
+export type ReceiptCategory = Receipt['category'];
+export type TripStatus = Trip['status'];
+export type ReservationStatus = Reservation['status'];
+
+// Joined types for queries that include related data
+export interface ReceiptWithTrip extends Receipt {
+  trips: { name: string; destination: string } | null;
+}

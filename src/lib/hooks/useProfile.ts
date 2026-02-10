@@ -1,18 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/state/auth-store';
+import type { Profile } from '@/lib/types/database';
 
-export interface Profile {
-  id: string;
-  name: string | null;
-  email: string | null;
-  forwarding_email: string | null;
-  forwarding_token: string | null;
-  avatar_url: string | null;
-  plan: 'free' | 'pro' | 'team';
-  created_at: string;
-  updated_at: string;
-}
+// Re-export for backward compatibility (consumers that import Profile from useProfile)
+export type { Profile } from '@/lib/types/database';
 
 export interface UpdateProfileInput {
   name?: string;

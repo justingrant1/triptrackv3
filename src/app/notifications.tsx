@@ -275,15 +275,43 @@ export default function NotificationsScreen() {
               entering={FadeInDown.duration(600)}
               className="bg-slate-800/30 rounded-3xl p-8 items-center border border-slate-700/30 mt-8"
             >
-              <View className="bg-slate-700/30 p-4 rounded-full mb-4">
-                <Bell size={32} color="#64748B" />
+              <View className="bg-emerald-500/10 p-5 rounded-full mb-5">
+                <CheckCircle size={40} color="#10B981" />
               </View>
-              <Text className="text-slate-300 text-lg font-semibold text-center" style={{ fontFamily: 'DMSans_700Bold' }}>
-                No notifications
+              <Text className="text-slate-200 text-xl font-bold text-center" style={{ fontFamily: 'DMSans_700Bold' }}>
+                All caught up! 🎉
               </Text>
-              <Text className="text-slate-500 text-sm text-center mt-2" style={{ fontFamily: 'DMSans_400Regular' }}>
-                We'll notify you about gate changes, delays, and reminders for your upcoming flights
+              <Text className="text-slate-500 text-sm text-center mt-3 px-4 leading-5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                You'll see flight updates, gate changes, delays, and trip reminders here
               </Text>
+
+              {/* Feature hints */}
+              <View className="w-full mt-6 gap-3">
+                <View className="flex-row items-center bg-slate-800/40 rounded-xl p-3">
+                  <View className="bg-amber-500/15 p-2 rounded-lg">
+                    <AlertCircle size={16} color="#F59E0B" />
+                  </View>
+                  <Text className="text-slate-400 text-xs ml-3 flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    Gate changes & delays — instant alerts
+                  </Text>
+                </View>
+                <View className="flex-row items-center bg-slate-800/40 rounded-xl p-3">
+                  <View className="bg-blue-500/15 p-2 rounded-lg">
+                    <Clock size={16} color="#3B82F6" />
+                  </View>
+                  <Text className="text-slate-400 text-xs ml-3 flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    Smart reminders before check-in & boarding
+                  </Text>
+                </View>
+                <View className="flex-row items-center bg-slate-800/40 rounded-xl p-3">
+                  <View className="bg-purple-500/15 p-2 rounded-lg">
+                    <Plane size={16} color="#8B5CF6" />
+                  </View>
+                  <Text className="text-slate-400 text-xs ml-3 flex-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    Trip summaries after you land
+                  </Text>
+                </View>
+              </View>
             </Animated.View>
           )}
 

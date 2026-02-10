@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../supabase';
+import { queryKeys } from '../query-keys';
 import type { Reservation, ReservationInsert, ReservationUpdate } from '../types/database';
 import { rescheduleRemindersForReservation, cancelRemindersForReservation } from '../notifications';
 
@@ -8,7 +9,7 @@ import { rescheduleRemindersForReservation, cancelRemindersForReservation } from
  */
 export function useReservations(tripId: string | undefined) {
   return useQuery({
-    queryKey: ['reservations', tripId],
+    queryKey: queryKeys.reservations.byTrip(tripId ?? ''),
     queryFn: async () => {
       if (!tripId) return [];
 
@@ -48,7 +49,7 @@ export function useReservation(reservationId: string | undefined) {
 }
 
 /**
- * Create a new reservation
+ * Create a new reservation — optimistic update adds it to the trip's list
  */
 export function useCreateReservation() {
   const queryClient = useQueryClient();
@@ -64,19 +65,58 @@ export function useCreateReservation() {
       if (error) throw error;
       return data as Reservation;
     },
+    onMutate: async (newReservation) => {
+      const tripKey = queryKeys.reservations.byTrip(newReservation.trip_id);
+      await queryClient.cancelQueries({ queryKey: tripKey });
+
+      const previous = queryClient.getQueryData<Reservation[]>(tripKey);
+
+      const optimistic: Reservation = {
+        id: `temp-${Date.now()}`,
+        trip_id: newReservation.trip_id,
+        type: newReservation.type,
+        title: newReservation.title,
+        subtitle: newReservation.subtitle ?? null,
+        start_time: newReservation.start_time,
+        end_time: newReservation.end_time ?? null,
+        location: newReservation.location ?? null,
+        address: newReservation.address ?? null,
+        confirmation_number: newReservation.confirmation_number ?? null,
+        details: newReservation.details ?? {},
+        status: newReservation.status ?? 'confirmed',
+        alert_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      queryClient.setQueryData<Reservation[]>(tripKey, (old) => {
+        const list = [...(old ?? []), optimistic];
+        return list.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+      });
+
+      return { previous, tripId: newReservation.trip_id };
+    },
+    onError: (_err, _newRes, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(
+          queryKeys.reservations.byTrip(context.tripId),
+          context.previous
+        );
+      }
+    },
     onSuccess: (data) => {
-      // Invalidate reservations for this trip
-      queryClient.invalidateQueries({ queryKey: ['reservations', data.trip_id] });
-      // Also invalidate the trip to update summary
-      queryClient.invalidateQueries({ queryKey: ['trips', data.trip_id] });
-      // Schedule local reminders for the new reservation
       rescheduleRemindersForReservation(data).catch(console.error);
+    },
+    onSettled: (_data, _err, newReservation) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.reservations.byTrip(newReservation.trip_id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(newReservation.trip_id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.reservations.upcoming });
     },
   });
 }
 
 /**
- * Update an existing reservation
+ * Update an existing reservation — optimistic update reflects changes immediately
  */
 export function useUpdateReservation() {
   const queryClient = useQueryClient();
@@ -94,19 +134,17 @@ export function useUpdateReservation() {
       return data as Reservation;
     },
     onSuccess: (data) => {
-      // Invalidate reservations for this trip
-      queryClient.invalidateQueries({ queryKey: ['reservations', data.trip_id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.reservations.byTrip(data.trip_id) });
       queryClient.invalidateQueries({ queryKey: ['reservations', 'single', data.id] });
-      // Also invalidate the trip to update summary
-      queryClient.invalidateQueries({ queryKey: ['trips', data.trip_id] });
-      // Reschedule reminders with updated times
+      queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(data.trip_id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.reservations.upcoming });
       rescheduleRemindersForReservation(data).catch(console.error);
     },
   });
 }
 
 /**
- * Delete a reservation
+ * Delete a reservation — optimistic update removes it from the list immediately
  */
 export function useDeleteReservation() {
   const queryClient = useQueryClient();
@@ -121,13 +159,33 @@ export function useDeleteReservation() {
       if (error) throw error;
       return { id, tripId };
     },
-    onSuccess: (data) => {
-      // Invalidate reservations for this trip
-      queryClient.invalidateQueries({ queryKey: ['reservations', data.tripId] });
-      // Also invalidate the trip to update summary
-      queryClient.invalidateQueries({ queryKey: ['trips', data.tripId] });
-      // Cancel local reminders for deleted reservation
-      cancelRemindersForReservation(data.id).catch(console.error);
+    onMutate: async ({ id, tripId }) => {
+      const tripKey = queryKeys.reservations.byTrip(tripId);
+      await queryClient.cancelQueries({ queryKey: tripKey });
+
+      const previous = queryClient.getQueryData<Reservation[]>(tripKey);
+
+      queryClient.setQueryData<Reservation[]>(tripKey, (old) =>
+        (old ?? []).filter((r) => r.id !== id)
+      );
+
+      return { previous, tripId };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(
+          queryKeys.reservations.byTrip(context.tripId),
+          context.previous
+        );
+      }
+    },
+    onSuccess: ({ id }) => {
+      cancelRemindersForReservation(id).catch(console.error);
+    },
+    onSettled: (_data, _err, { tripId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.reservations.byTrip(tripId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(tripId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.reservations.upcoming });
     },
   });
 }
@@ -139,10 +197,9 @@ export function useDeleteReservation() {
  */
 export function useUpcomingReservations() {
   return useQuery({
-    queryKey: ['reservations', 'upcoming'],
+    queryKey: queryKeys.reservations.upcoming,
     queryFn: async () => {
       const now = new Date();
-      // Start of today (midnight local time)
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const in48Hours = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 

@@ -76,9 +76,9 @@ export default function ConciergeModal() {
       const message = query;
       setQuery('');
       
-      // Increment AI message count
+      // Increment AI message count and reactively update the query cache
       await incrementAIMessageCount();
-      queryClient.invalidateQueries({ queryKey: ['ai-messages-today'] });
+      queryClient.setQueryData(['ai-messages-today'], (old: number | undefined) => (old ?? 0) + 1);
       
       await sendMessageStreaming(message);
       
@@ -100,9 +100,9 @@ export default function ConciergeModal() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setQuery(text);
     
-    // Increment AI message count
+    // Increment AI message count and reactively update the query cache
     await incrementAIMessageCount();
-    queryClient.invalidateQueries({ queryKey: ['ai-messages-today'] });
+    queryClient.setQueryData(['ai-messages-today'], (old: number | undefined) => (old ?? 0) + 1);
     
     await sendMessageStreaming(text);
     setQuery('');

@@ -113,12 +113,8 @@ export default function LoginScreen() {
           Alert.alert('Success', result.error);
         } else {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          // For new signups, go to onboarding; for login, go to main app
-          if (isLogin) {
-            router.replace('/(tabs)');
-          } else {
-            router.replace('/onboarding');
-          }
+          // Navigation is handled by _layout.tsx auth guard — no manual router.replace needed.
+          // The auth state change propagates through Zustand → layout detects user → navigates.
         }
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -145,12 +141,8 @@ export default function LoginScreen() {
 
       if (result.success) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // New Apple users go to onboarding, returning users go to main app
-        if (result.isNewUser) {
-          router.replace('/onboarding');
-        } else {
-          router.replace('/(tabs)');
-        }
+        // Navigation is handled by _layout.tsx auth guard — no manual router.replace needed.
+        // The auth state change propagates through Zustand → layout detects user → navigates.
       } else if (result.error) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Alert.alert('Sign In Failed', result.error);

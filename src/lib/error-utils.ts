@@ -81,6 +81,19 @@ export function isAuthError(error: unknown): boolean {
 }
 
 /**
+ * Safely extract a message string from any error type.
+ * Use this instead of `(error as any).message` or `catch (error: any)`.
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return 'An unexpected error occurred';
+}
+
+/**
  * Returns a user-friendly error message based on error type
  */
 export function getOfflineFriendlyMessage(error: unknown, hasCache: boolean): string {

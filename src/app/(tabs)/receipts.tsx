@@ -35,6 +35,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
+import { useFocusEffect } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTrips } from '@/lib/hooks/useTrips';
 import { useAllReceipts, useDeleteReceipt } from '@/lib/hooks/useReceipts';
 import { useSubscription } from '@/lib/hooks/useSubscription';
@@ -286,6 +288,15 @@ export default function ReceiptsScreen() {
   const scanEmailReceipts = useScanEmailReceipts();
   const isLoading = tripsLoading || receiptsLoading;
 
+  const queryClient = useQueryClient();
+
+  // Refetch receipts when screen gains focus (e.g. returning from add/edit)
+  useFocusEffect(
+    React.useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ['receipts'] });
+    }, [queryClient])
+  );
+
   // Find Gmail account
   const gmailAccount = connectedAccounts.find((a: any) => a.provider === 'gmail' || a.provider === 'google');
 
@@ -455,6 +466,7 @@ export default function ReceiptsScreen() {
         <ScrollView 
           className="flex-1" 
           showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

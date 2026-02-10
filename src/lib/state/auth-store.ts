@@ -9,6 +9,7 @@ interface AuthState {
   isLoading: boolean;
   isInitialized: boolean;
   error: string | null;
+  _authSubscription: { unsubscribe: () => void } | null;
   
   // Actions
   initialize: () => Promise<void>;
@@ -25,6 +26,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isLoading: false,
   isInitialized: false,
   error: null,
+  _authSubscription: null,
 
   /**
    * Initialize auth state and set up listener.
@@ -60,14 +62,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isLoading: false,
       });
 
-      // Set up auth state listener
-      onAuthStateChange((event, session) => {
-        console.log('Auth state changed:', event);
-        set({
-          session,
-          user: session?.user ?? null,
+      // Set up auth state listener (only once — prevent duplicate subscriptions)
+      if (!get()._authSubscription) {
+        const { data: subscription } = onAuthStateChange((event, session) => {
+          console.log('Auth state changed:', event);
+          set({
+            session,
+            user: session?.user ?? null,
+          });
         });
-      });
+        set({ _authSubscription: subscription?.subscription ?? null });
+      }
     } catch (error: any) {
       console.error('Error initializing auth:', error);
       // Even on error, mark as initialized so the app can proceed

@@ -751,7 +751,7 @@ export default function TodayScreen() {
     pollFlightStatus();
 
     return () => clearInterval(timer);
-  }, [nearestFlight?.id, tripIdsWithFlights.join(',')]);
+  }, [nearestFlight?.id, JSON.stringify(tripIdsWithFlights)]);
 
   // ─── Pull-to-Refresh ──────────────────────────────────────────────────────
   const onRefresh = React.useCallback(async () => {

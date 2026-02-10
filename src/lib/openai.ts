@@ -1,10 +1,17 @@
 /**
- * OpenAI API Service
- * Handles all interactions with OpenAI's API including chat completions and vision
+ * OpenAI API Service — Server-Side Proxy
+ * 
+ * All OpenAI calls are proxied through Supabase Edge Functions so the API key
+ * never leaves the server. The client sends authenticated requests to our edge
+ * functions, which forward them to OpenAI with the server-side key.
+ * 
+ * Edge functions used:
+ * - ai-chat: Chat completions (used by Concierge)
+ * - ai-receipt-scan: Receipt OCR via GPT-4 Vision
+ * - parse-travel-email: Email parsing (already server-side)
  */
 
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_VIBECODE_OPENAI_API_KEY;
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+import { supabase } from './supabase';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -35,127 +42,96 @@ export interface ChatCompletionResponse {
 }
 
 /**
- * Send a chat completion request to OpenAI
+ * Get the current session token for authenticated edge function calls
+ */
+async function getAuthToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Not authenticated — please sign in');
+  }
+  return session.access_token;
+}
+
+/**
+ * Get the Supabase Functions URL
+ */
+function getFunctionsUrl(): string {
+  const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  if (!url) throw new Error('EXPO_PUBLIC_SUPABASE_URL not configured');
+  return url.replace('.supabase.co', '.supabase.co/functions/v1');
+}
+
+/**
+ * Send a chat completion request via the ai-chat edge function
  */
 export async function createChatCompletion(
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResponse> {
-  if (!OPENAI_API_KEY) {
-    throw new Error('OpenAI API key not configured');
-  }
+  const token = await getAuthToken();
+  const functionsUrl = getFunctionsUrl();
 
-  const response = await fetch(OPENAI_API_URL, {
+  const response = await fetch(`${functionsUrl}/ai-chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Authorization': `Bearer ${token}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini', // Fast and cost-effective
       messages: options.messages,
       temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 500,
-      stream: options.stream ?? false,
+      maxTokens: options.maxTokens ?? 500,
     }),
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
-    throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    
+    // Handle rate limit specifically
+    if (response.status === 429) {
+      throw new Error(error.error || 'Daily AI message limit reached. Upgrade to Pro for unlimited messages.');
+    }
+    
+    throw new Error(error.error || `AI service error: ${response.status}`);
   }
 
   return response.json();
 }
 
 /**
- * Create a streaming chat completion
- * For React Native, we use non-streaming and simulate streaming by yielding the full response
+ * Create a "streaming" chat completion
+ * Since we proxy through an edge function (non-streaming), we simulate streaming
+ * by yielding words from the full response with small delays.
  */
 export async function* createStreamingChatCompletion(
   options: ChatCompletionOptions
 ): AsyncGenerator<string, void, unknown> {
-  if (!OPENAI_API_KEY) {
-    throw new Error('OpenAI API key not configured');
-  }
-
-  // React Native doesn't support ReadableStream, so we use non-streaming
-  const response = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: options.messages,
-      temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 500,
-      stream: false, // Changed to false for React Native compatibility
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
-    throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
-  }
-
-  const data: ChatCompletionResponse = await response.json();
+  const data = await createChatCompletion(options);
   const content = data.choices[0]?.message?.content || '';
   
   // Simulate streaming by yielding words with small delays
   const words = content.split(' ');
   for (let i = 0; i < words.length; i++) {
     yield words[i] + (i < words.length - 1 ? ' ' : '');
-    // Small delay to simulate streaming (optional)
     await new Promise(resolve => setTimeout(resolve, 30));
   }
 }
 
 /**
- * Extract text from an image using GPT-4 Vision
+ * Extract text from an image using GPT-4 Vision via edge function
  * Supports both URLs and base64 data URIs
  */
 export async function extractTextFromImage(
   imageUrl: string,
-  prompt: string = 'Extract all text from this image, including merchant name, amount, date, and any other relevant details.'
+  _prompt?: string
 ): Promise<string> {
-  if (!OPENAI_API_KEY) {
-    throw new Error('OpenAI API key not configured');
-  }
-
-  const response = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o', // Vision model
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageUrl } },
-          ],
-        },
-      ],
-      max_tokens: 500,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
-    throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
-  }
-
-  const data: ChatCompletionResponse = await response.json();
-  return data.choices[0]?.message?.content || '';
+  // This is now handled by the ai-receipt-scan edge function
+  // For backward compatibility, we call extractReceiptData and return raw text
+  const data = await extractReceiptData(imageUrl);
+  return JSON.stringify(data);
 }
 
 /**
- * Extract receipt data from an image
- * Returns structured data for merchant, amount, date, etc.
+ * Extract receipt data from an image via the ai-receipt-scan edge function
  */
 export interface ReceiptData {
   merchant: string;
@@ -166,55 +142,42 @@ export interface ReceiptData {
 }
 
 export async function extractReceiptData(imageUrlOrBase64: string): Promise<ReceiptData> {
-  const prompt = `Extract the following information from this receipt image and return it as JSON:
-{
-  "merchant": "merchant name",
-  "amount": numeric amount (just the number, no currency symbol),
-  "date": "YYYY-MM-DD format",
-  "category": "transport" | "lodging" | "meals" | "other" (best guess),
-  "currency": "USD" | "EUR" | etc (if visible, otherwise USD)
-}
+  const token = await getAuthToken();
+  const functionsUrl = getFunctionsUrl();
 
-Only return the JSON, no other text.`;
+  const response = await fetch(`${functionsUrl}/ai-receipt-scan`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ imageUrl: imageUrlOrBase64 }),
+  });
 
-  const response = await extractTextFromImage(imageUrlOrBase64, prompt);
-  
-  try {
-    // Try to parse JSON from the response
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const data = JSON.parse(jsonMatch[0]);
-      return {
-        merchant: data.merchant || 'Unknown Merchant',
-        amount: parseFloat(data.amount) || 0,
-        date: data.date || new Date().toISOString().split('T')[0],
-        category: data.category || 'other',
-        currency: data.currency || 'USD',
-      };
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    
+    if (response.status === 403 && error.upgrade) {
+      throw new Error('Receipt scanning requires a Pro subscription');
     }
-  } catch (e) {
-    console.error('Failed to parse receipt data:', e);
+    
+    throw new Error(error.error || `Receipt scan error: ${response.status}`);
   }
 
-  // Fallback if parsing fails
-  return {
-    merchant: 'Unknown Merchant',
-    amount: 0,
-    date: new Date().toISOString().split('T')[0],
-    category: 'other',
-    currency: 'USD',
-  };
+  return response.json();
 }
 
 /**
  * Parse travel confirmation email into structured trip/reservation data
+ * NOTE: This already uses the parse-travel-email edge function (called from parse-email.tsx).
+ * Keeping this client-side version for backward compatibility with any direct callers.
  */
 export interface ParsedReservation {
   type: 'flight' | 'hotel' | 'car' | 'train' | 'meeting' | 'event';
   title: string;
   subtitle?: string;
-  start_time: string; // ISO 8601
-  end_time?: string; // ISO 8601
+  start_time: string;
+  end_time?: string;
   location?: string;
   address?: string;
   confirmation_number?: string;
@@ -224,12 +187,13 @@ export interface ParsedReservation {
 export interface ParsedTrip {
   trip_name: string;
   destination: string;
-  start_date: string; // YYYY-MM-DD
-  end_date: string; // YYYY-MM-DD
+  start_date: string;
+  end_date: string;
   reservations: ParsedReservation[];
 }
 
 export async function parseEmailToReservation(emailText: string): Promise<ParsedTrip> {
+  // Use the ai-chat edge function for email parsing too
   const prompt = `You are a travel email parser. Extract trip and reservation details from this confirmation email.
 
 Return ONLY valid JSON in this exact format:
@@ -248,28 +212,10 @@ Return ONLY valid JSON in this exact format:
       "location": "Airport code or city",
       "address": "Full address if available",
       "confirmation_number": "Confirmation/booking number",
-      "details": {
-        "Seat": "seat number (flights)",
-        "Gate": "gate number (flights)",
-        "Terminal": "terminal (flights)",
-        "Room": "room type (hotels)",
-        "Vehicle": "car type (rentals)",
-        "any_other_key": "any other relevant detail"
-      }
+      "details": {}
     }
   ]
 }
-
-Rules:
-- Extract ALL reservations from the email (flights, hotels, cars, etc.)
-- Use ISO 8601 format for all timestamps
-- Include timezone if available, otherwise use UTC
-- For flights: extract airline, flight number, departure/arrival times, airports, seat, gate
-- For hotels: extract hotel name, check-in/out times, room type, address
-- For cars: extract company, pickup/return times, vehicle type, location
-- Infer trip name from destination and purpose if not explicit
-- If multiple reservations, group them under one trip
-- Return ONLY the JSON, no other text
 
 Email:
 ${emailText}`;
@@ -277,13 +223,12 @@ ${emailText}`;
   try {
     const response = await createChatCompletion({
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3, // Lower temperature for more consistent parsing
+      temperature: 0.3,
       maxTokens: 1500,
     });
 
     const content = response.choices[0]?.message?.content || '';
     
-    // Extract JSON from response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('No JSON found in response');
@@ -291,7 +236,6 @@ ${emailText}`;
 
     const parsed: ParsedTrip = JSON.parse(jsonMatch[0]);
 
-    // Validate required fields
     if (!parsed.trip_name || !parsed.destination || !parsed.start_date || !parsed.end_date) {
       throw new Error('Missing required trip fields');
     }
@@ -300,7 +244,6 @@ ${emailText}`;
       throw new Error('No reservations found in email');
     }
 
-    // Validate each reservation
     parsed.reservations = parsed.reservations.filter(res => {
       return res.type && res.title && res.start_time;
     });

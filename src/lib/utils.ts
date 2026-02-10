@@ -98,28 +98,47 @@ export const isTomorrow = (date: Date): boolean => {
   );
 };
 
+// ─── Centralized Reservation Color & Icon Maps ──────────────────────────────
+// Single source of truth — import these instead of redefining in each screen.
+
+/** Primary + secondary gradient colors for each reservation type */
+export const RESERVATION_COLORS: Record<ReservationType, [string, string]> = {
+  flight: ['#3B82F6', '#1D4ED8'],
+  hotel: ['#8B5CF6', '#6D28D9'],
+  car: ['#10B981', '#047857'],
+  train: ['#F59E0B', '#D97706'],
+  meeting: ['#EC4899', '#BE185D'],
+  event: ['#06B6D4', '#0891B2'],
+};
+
+/** Lucide icon name for each reservation type */
+export const RESERVATION_ICON_NAMES: Record<ReservationType, string> = {
+  flight: 'Plane',
+  hotel: 'Building2',
+  car: 'Car',
+  train: 'Train',
+  meeting: 'Users',
+  event: 'Ticket',
+};
+
 export const getReservationIcon = (type: ReservationType): string => {
-  const icons: Record<ReservationType, string> = {
-    flight: 'Plane',
-    hotel: 'Building2',
-    car: 'Car',
-    train: 'Train',
-    meeting: 'Users',
-    event: 'Ticket',
-  };
-  return icons[type];
+  return RESERVATION_ICON_NAMES[type] ?? 'Plane';
 };
 
 export const getReservationColor = (type: ReservationType): string => {
-  const colors: Record<ReservationType, string> = {
-    flight: '#3B82F6', // blue
-    hotel: '#8B5CF6', // purple
-    car: '#10B981', // green
-    train: '#F59E0B', // amber
-    meeting: '#EC4899', // pink
-    event: '#06B6D4', // cyan
-  };
-  return colors[type];
+  return RESERVATION_COLORS[type]?.[0] ?? '#6B7280';
+};
+
+/** Get [primary, secondary] gradient pair for a reservation type */
+export const getTypeGradient = (type: ReservationType): [string, string] => {
+  return RESERVATION_COLORS[type] ?? ['#6B7280', '#4B5563'];
+};
+
+/** Extract airport code from a string like "JFK - John F. Kennedy" → "JFK" */
+export const extractAirportCode = (text: string | null | undefined): string | null => {
+  if (!text) return null;
+  const match = text.match(/\b([A-Z]{3})\b/);
+  return match ? match[1] : null;
 };
 
 export const formatCurrency = (amount: number, currency: string = 'USD'): string => {

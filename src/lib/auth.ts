@@ -172,31 +172,39 @@ export async function updatePassword(newPassword: string): Promise<{ error: Auth
 
 /**
  * Delete the current user account
- * WARNING: This will permanently delete the user and all associated data
+ * WARNING: This will permanently delete the user and all associated data.
+ * Uses the delete-account edge function which has the service role key
+ * needed to call admin.deleteUser() — this cannot be done from the client.
  */
 export async function deleteAccount(): Promise<{ error: AuthError | null }> {
   try {
-    // First, get the current user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
     
-    if (userError || !user) {
-      return { error: { message: 'No authenticated user found' } };
+    if (!session?.access_token) {
+      return { error: { message: 'No authenticated session found' } };
     }
 
-    // Delete the user account (this will cascade delete all related data due to RLS policies)
-    const { error } = await supabase.rpc('delete_user');
-
-    if (error) {
-      // If RPC doesn't exist, try the admin API approach
-      // Note: This requires the user to be authenticated
-      const { error: deleteError } = await supabase.auth.admin.deleteUser(user.id);
-      
-      if (deleteError) {
-        return { error: { message: deleteError.message } };
-      }
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+    if (!supabaseUrl) {
+      return { error: { message: 'Supabase URL not configured' } };
     }
 
-    // Sign out after deletion
+    const functionsUrl = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1');
+
+    const response = await fetch(`${functionsUrl}/delete-account`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: 'Unknown error' }));
+      return { error: { message: data.error || `Delete failed: ${response.status}` } };
+    }
+
+    // Sign out locally after server-side deletion
     await supabase.auth.signOut();
 
     return { error: null };

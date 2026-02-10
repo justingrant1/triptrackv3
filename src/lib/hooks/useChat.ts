@@ -1,12 +1,16 @@
 /**
  * Chat hooks for AI Concierge
- * Manages conversation history and streaming responses
+ * Manages conversation history with AsyncStorage persistence
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createChatCompletion, createStreamingChatCompletion, ChatMessage } from '@/lib/openai';
 import { useTrips } from './useTrips';
 import { useUpcomingReservations } from './useReservations';
+
+const CHAT_STORAGE_KEY = 'triptrack_chat_history';
+const MAX_PERSISTED_MESSAGES = 50; // Keep last 50 messages to avoid storage bloat
 
 export interface Message {
   id: string;
@@ -15,17 +19,75 @@ export interface Message {
   timestamp: Date;
 }
 
+/** Serializable version for AsyncStorage */
+interface PersistedMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string; // ISO string
+}
+
 /**
- * Hook for managing chat conversations with AI
+ * Hook for managing chat conversations with AI.
+ * Messages are persisted to AsyncStorage so they survive modal close / app restart.
  */
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
 
   // Get user's trip context for AI
   const { data: trips = [] } = useTrips();
   const { data: upcomingReservations = [] } = useUpcomingReservations();
+
+  // ─── Persistence ──────────────────────────────────────────────────────────
+
+  /** Load messages from AsyncStorage on mount */
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(CHAT_STORAGE_KEY);
+        if (raw) {
+          const persisted: PersistedMessage[] = JSON.parse(raw);
+          const hydrated: Message[] = persisted.map((m) => ({
+            ...m,
+            timestamp: new Date(m.timestamp),
+          }));
+          setMessages(hydrated);
+        }
+      } catch (err) {
+        console.warn('Failed to load chat history:', err);
+      } finally {
+        setIsHydrated(true);
+      }
+    })();
+  }, []);
+
+  /** Save messages to AsyncStorage whenever they change (after hydration) */
+  useEffect(() => {
+    if (!isHydrated) return;
+
+    const persist = async () => {
+      try {
+        const toSave: PersistedMessage[] = messages
+          .slice(-MAX_PERSISTED_MESSAGES)
+          .map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            timestamp: m.timestamp.toISOString(),
+          }));
+        await AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(toSave));
+      } catch (err) {
+        console.warn('Failed to save chat history:', err);
+      }
+    };
+
+    persist();
+  }, [messages, isHydrated]);
+
+  // ─── System Prompt ────────────────────────────────────────────────────────
 
   /**
    * Build system prompt with user's trip context
@@ -62,6 +124,8 @@ Be concise, friendly, and helpful. Use emojis occasionally to make responses mor
 
     return prompt;
   }, [trips, upcomingReservations]);
+
+  // ─── Send Message ─────────────────────────────────────────────────────────
 
   /**
    * Send a message and get AI response (non-streaming)
@@ -108,8 +172,9 @@ Be concise, friendly, and helpful. Use emojis occasionally to make responses mor
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-    } catch (err: any) {
-      setError(err.message || 'Failed to get response from AI');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to get response from AI';
+      setError(message);
       console.error('Chat error:', err);
     } finally {
       setIsLoading(false);
@@ -175,8 +240,9 @@ Be concise, friendly, and helpful. Use emojis occasionally to make responses mor
           )
         );
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to get response from AI');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to get response from AI';
+      setError(message);
       console.error('Chat error:', err);
       
       // Remove the placeholder message on error
@@ -187,16 +253,22 @@ Be concise, friendly, and helpful. Use emojis occasionally to make responses mor
   }, [messages, buildSystemPrompt]);
 
   /**
-   * Clear conversation history
+   * Clear conversation history (both in-memory and persisted)
    */
-  const clearMessages = useCallback(() => {
+  const clearMessages = useCallback(async () => {
     setMessages([]);
     setError(null);
+    try {
+      await AsyncStorage.removeItem(CHAT_STORAGE_KEY);
+    } catch (err) {
+      console.warn('Failed to clear chat history:', err);
+    }
   }, []);
 
   return {
     messages,
     isLoading,
+    isHydrated,
     error,
     sendMessage,
     sendMessageStreaming,

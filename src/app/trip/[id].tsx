@@ -21,6 +21,8 @@ import {
   Plus,
   Edit3,
   MoreVertical,
+  Receipt,
+  DollarSign,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -37,8 +39,9 @@ import * as Clipboard from 'expo-clipboard';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTrip, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservations, useDeleteReservation } from '@/lib/hooks/useReservations';
+import { useTripExpenses } from '@/lib/hooks/useReceipts';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatDate, formatDateLong, isToday, isTomorrow, getLiveStatus, LiveStatus } from '@/lib/utils';
+import { formatTime, formatDate, formatDateLong, formatCurrency, isToday, isTomorrow, getLiveStatus, LiveStatus } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { shareTripNative } from '@/lib/sharing';
@@ -708,25 +711,19 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
                       onPress={(e) => {
                         e.stopPropagation();
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        Alert.alert(
-                          reservation.title,
-                          'Choose an action',
-                          [
-                            {
-                              text: 'Edit',
-                              onPress: handleEdit,
-                            },
-                            {
-                              text: 'Delete',
-                              onPress: handleDelete,
-                              style: 'destructive',
-                            },
-                            {
-                              text: 'Cancel',
-                              style: 'cancel',
-                            },
-                          ]
+                        const actions: any[] = [];
+                        if (reservation.confirmation_number) {
+                          actions.push({
+                            text: `Copy Conf # (${reservation.confirmation_number})`,
+                            onPress: handleCopyConfirmation,
+                          });
+                        }
+                        actions.push(
+                          { text: 'Edit', onPress: handleEdit },
+                          { text: 'Delete', onPress: handleDelete, style: 'destructive' },
+                          { text: 'Cancel', style: 'cancel' },
                         );
+                        Alert.alert(reservation.title, 'Choose an action', actions);
                       }}
                       className="p-1"
                     >
@@ -814,6 +811,7 @@ function TripDetailScreenContent() {
   const { data: trip, isLoading: tripLoading } = useTrip(id);
   const { data: reservations = [], isLoading: reservationsLoading } = useReservations(id);
   const { data: weather } = useWeather(trip?.destination);
+  const { data: expenses } = useTripExpenses(id);
   const deleteTrip = useDeleteTrip();
   
   // Flight status: pull-to-refresh mutation + background polling
@@ -1082,6 +1080,33 @@ function TripDetailScreenContent() {
             <Text className="text-slate-500 text-sm mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
               {formatDateLong(new Date(trip.start_date))} - {formatDateLong(new Date(trip.end_date))}
             </Text>
+
+            {/* Expense Summary Card */}
+            {expenses && expenses.total > 0 && (
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push('/(tabs)/receipts');
+                }}
+                className="mt-4 bg-slate-800/50 rounded-2xl p-4 border border-slate-700/50 flex-row items-center"
+              >
+                <View className="bg-emerald-500/20 p-2.5 rounded-xl">
+                  <DollarSign size={20} color="#10B981" />
+                </View>
+                <View className="flex-1 ml-3">
+                  <Text className="text-white text-lg font-bold" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+                    {formatCurrency(expenses.total)}
+                  </Text>
+                  <Text className="text-slate-400 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    {expenses.count} receipt{expenses.count !== 1 ? 's' : ''}
+                    {expenses.byCategory && Object.keys(expenses.byCategory).length > 0 && (
+                      ` · ${Object.entries(expenses.byCategory).map(([cat, amt]) => `${cat} ${formatCurrency(amt as number)}`).join(', ')}`
+                    )}
+                  </Text>
+                </View>
+                <Receipt size={16} color="#64748B" />
+              </Pressable>
+            )}
           </View>
         )}
         renderSectionHeader={({ section }) => (
