@@ -437,6 +437,56 @@ function cleanFlightNumber(input: string): string | null {
   return null;
 }
 
+// ─── Date / Time Guards ──────────────────────────────────────────────────────
+
+/**
+ * Check if a reservation is within the trackable window.
+ * AirLabs only returns today's real-time data, so we should only call it
+ * for flights departing within -12h to +36h of now.
+ */
+function isWithinTrackableWindow(reservation: Reservation): boolean {
+  const now = Date.now();
+  const depTime = new Date(reservation.start_time).getTime();
+  const hoursUntil = (depTime - now) / (1000 * 60 * 60);
+  // -12h (departed up to 12h ago) to +36h (departing within next 36h)
+  return hoursUntil >= -12 && hoursUntil <= 36;
+}
+
+/**
+ * Validate that AirLabs returned data for the CORRECT flight instance.
+ * Compares the API's dep_scheduled with the reservation's start_time.
+ * dep_scheduled is the ORIGINAL scheduled time — it does NOT change with delays,
+ * so even a 6-hour delay won't cause a false mismatch.
+ *
+ * Same flight number can run morning + evening, or daily. If the scheduled
+ * departure times differ by more than 3 hours, it's the wrong instance.
+ */
+function isCorrectFlightInstance(
+  apiStatus: FlightStatusData,
+  reservation: Reservation
+): boolean {
+  if (!apiStatus.dep_scheduled) {
+    // No scheduled time from API — can't validate, allow it
+    // (better to show potentially wrong data than block everything)
+    return true;
+  }
+
+  const apiDepTime = new Date(apiStatus.dep_scheduled).getTime();
+  const reservationDepTime = new Date(reservation.start_time).getTime();
+  const diffHours = Math.abs(apiDepTime - reservationDepTime) / (1000 * 60 * 60);
+
+  if (diffHours > 3) {
+    console.log(
+      `[Flight Guard] Rejecting ${apiStatus.flight_iata} data: ` +
+      `API dep_scheduled=${apiStatus.dep_scheduled} vs reservation start_time=${reservation.start_time} ` +
+      `(${diffHours.toFixed(1)}h difference — likely wrong flight instance)`
+    );
+    return false;
+  }
+
+  return true;
+}
+
 // ─── Process a Single Reservation ────────────────────────────────────────────
 
 async function processReservation(
@@ -461,6 +511,23 @@ async function processReservation(
     };
   }
 
+  // ── Layer 1: Date guard ──────────────────────────────────────────
+  // AirLabs only returns today's real-time data. Skip flights outside
+  // the trackable window to avoid getting wrong-date data.
+  if (!isWithinTrackableWindow(reservation)) {
+    const hoursUntil = (new Date(reservation.start_time).getTime() - Date.now()) / (1000 * 60 * 60);
+    console.log(
+      `[Flight Guard] Skipping ${flightIata} — departure is ${hoursUntil.toFixed(0)}h away, outside trackable window`
+    );
+    return {
+      reservation_id: reservation.id,
+      flight_iata: flightIata,
+      status: null,
+      changes: [],
+      error: null, // Not an error — just not trackable yet
+    };
+  }
+
   // Fetch from AirLabs
   const newStatus = await fetchFlightFromAirLabs(flightIata);
 
@@ -471,6 +538,19 @@ async function processReservation(
       status: null,
       changes: [],
       error: "Flight not found or API unavailable",
+    };
+  }
+
+  // ── Layer 2: Time validation ─────────────────────────────────────
+  // Verify AirLabs returned the correct flight instance (not morning
+  // vs evening, or a different day's flight with the same number).
+  if (!isCorrectFlightInstance(newStatus, reservation)) {
+    return {
+      reservation_id: reservation.id,
+      flight_iata: flightIata,
+      status: null,
+      changes: [],
+      error: null, // Not an error — wrong instance, skip silently
     };
   }
 

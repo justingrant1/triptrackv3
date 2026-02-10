@@ -224,10 +224,32 @@ export function hasFlightStatus(reservation: Reservation): boolean {
 }
 
 /**
+ * Validate that stored flight status data actually matches this reservation.
+ * Catches cases where AirLabs returned today's flight data for a future trip
+ * (same flight number, wrong date). Compares dep_scheduled vs start_time.
+ */
+export function isFlightStatusValid(reservation: Reservation): boolean {
+  const status = reservation.details?._flight_status as FlightStatusData | undefined;
+  if (!status?.dep_scheduled) return true; // Can't validate — allow it
+
+  const apiDepTime = new Date(status.dep_scheduled).getTime();
+  const reservationDepTime = new Date(reservation.start_time).getTime();
+  const diffHours = Math.abs(apiDepTime - reservationDepTime) / (1000 * 60 * 60);
+
+  // If scheduled departure times differ by more than 3 hours, the stored
+  // data is from the wrong flight instance (wrong date or wrong time-of-day)
+  return diffHours <= 3;
+}
+
+/**
  * Get the stored flight status data from a reservation's details.
+ * Returns null if no status stored OR if the stored data is stale/wrong
+ * (e.g., from a different date's flight with the same number).
  */
 export function getStoredFlightStatus(reservation: Reservation): FlightStatusData | null {
   if (!hasFlightStatus(reservation)) return null;
+  // Validate the stored data matches this reservation's date
+  if (!isFlightStatusValid(reservation)) return null;
   return reservation.details._flight_status as FlightStatusData;
 }
 
