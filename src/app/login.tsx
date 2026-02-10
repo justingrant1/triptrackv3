@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator, Image } from 'react-native';
+import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator, Image, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { isAppleSignInAvailable } from '@/lib/apple-auth';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -217,6 +217,7 @@ export default function LoginScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           className="flex-1"
         >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
           <View className="flex-1 px-6 pt-8 justify-between">
             {/* Header Section */}
             <Animated.View
@@ -441,6 +442,7 @@ export default function LoginScreen() {
               </Text>
             </Animated.View>
           </View>
+          </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>

@@ -89,6 +89,8 @@ interface ScanStats {
   pdfAttachmentsProcessed: number;
   duplicatesSkipped: number;
   errors: number;
+  stoppedEarly: boolean;
+  has_more: boolean;
 }
 
 // ============================================================
@@ -1514,6 +1516,14 @@ serve(async (req) => {
     // Default mode: Trip scanning
     // ============================================================
 
+    // Time budget: stop processing before the 150s Supabase timeout
+    const SCAN_START_TIME = Date.now();
+    const TIME_BUDGET_MS = 115_000; // 115 seconds — leave 35s buffer for cleanup + response
+
+    function hasTimeBudget(): boolean {
+      return (Date.now() - SCAN_START_TIME) < TIME_BUDGET_MS;
+    }
+
     // Initialize stats
     const stats: ScanStats = {
       messagesScanned: 0,
@@ -1526,6 +1536,8 @@ serve(async (req) => {
       pdfAttachmentsProcessed: 0,
       duplicatesSkipped: 0,
       errors: 0,
+      stoppedEarly: false,
+      has_more: false,
     };
 
     // Search Gmail for travel emails
@@ -1534,12 +1546,40 @@ serve(async (req) => {
     stats.messagesScanned = messages.length;
     console.log(`Found ${messages.length} potential travel emails`);
 
+    // Batch check: get all already-processed message IDs in one query
+    // This replaces 50 individual DB queries with 1 query
+    const allMessageIds = messages.map(m => m.id);
+    let processedMessageIds = new Set<string>();
+    if (allMessageIds.length > 0) {
+      try {
+        const { data: processedRows } = await supabase
+          .from('processed_gmail_messages')
+          .select('gmail_message_id')
+          .eq('user_id', user.id)
+          .in('gmail_message_id', allMessageIds);
+        
+        if (processedRows) {
+          processedMessageIds = new Set(processedRows.map((r: any) => r.gmail_message_id));
+        }
+        console.log(`Batch dedup: ${processedMessageIds.size} of ${allMessageIds.length} already processed`);
+      } catch (err) {
+        console.warn('Batch dedup query failed, falling back to individual checks:', err);
+      }
+    }
+
     // Process each message
     for (const message of messages) {
+      // Check time budget before starting a new email
+      if (!hasTimeBudget()) {
+        console.log(`⏱️ Time budget exhausted after ${Math.round((Date.now() - SCAN_START_TIME) / 1000)}s — stopping early`);
+        stats.stoppedEarly = true;
+        stats.has_more = true;
+        break;
+      }
+
       try {
-        // Step 1: Check if already processed
-        const alreadyProcessed = await isMessageProcessed(supabase, user.id, message.id);
-        if (alreadyProcessed) {
+        // Step 1: Check if already processed (using batch result)
+        if (processedMessageIds.has(message.id)) {
           stats.skippedAlreadyProcessed++;
           continue;
         }

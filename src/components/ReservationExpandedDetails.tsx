@@ -4,7 +4,7 @@ import { Plane, Train, MapPin, Copy } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatDate } from '@/lib/utils';
+import { formatTime, formatTimeFromISO, formatDate } from '@/lib/utils';
 import { FlightStatusBar } from '@/components/FlightStatusBar';
 import { getStoredFlightStatus } from '@/lib/flight-status';
 
@@ -60,8 +60,21 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
     const arrAirport = d['Arrival Airport'] || d['To'] || null;
     const depCode = extractAirportCode(depAirport) || extractAirportCode(reservation.title);
     const arrCode = extractAirportCode(arrAirport) || extractAirportCode(reservation.title);
-    const depTime = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
-    const arrTime = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    // Use formatTimeFromISO to preserve local departure/arrival times (avoids timezone conversion)
+    const depTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
+    const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
+
+    // Calculate flight duration
+    let flightDuration: string | null = d['Duration'] || d['Journey Time'] || null;
+    if (!flightDuration && reservation.start_time && reservation.end_time) {
+      const diffMs = new Date(reservation.end_time).getTime() - new Date(reservation.start_time).getTime();
+      const diffMins = Math.round(diffMs / 60000);
+      if (diffMins > 0 && diffMins < 1440) { // sanity check: less than 24h
+        const hours = Math.floor(diffMins / 60);
+        const mins = diffMins % 60;
+        flightDuration = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+      }
+    }
 
     // Clean airport names (remove code if we extracted it)
     const depName = depAirport?.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-–]\s*/, '') || null;
@@ -93,11 +106,18 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
                 )}
               </View>
 
-              {/* Route line with plane */}
-              <View className="flex-row items-center mx-2 flex-1 justify-center">
-                <View className="h-px bg-slate-600 flex-1" />
-                <Plane size={16} color="#3B82F6" style={{ marginHorizontal: 4 }} />
-                <View className="h-px bg-slate-600 flex-1" />
+              {/* Route line with plane + duration */}
+              <View className="items-center mx-2 flex-1 justify-center">
+                <View className="flex-row items-center w-full">
+                  <View className="h-px bg-slate-600 flex-1" />
+                  <Plane size={16} color="#3B82F6" style={{ marginHorizontal: 4 }} />
+                  <View className="h-px bg-slate-600 flex-1" />
+                </View>
+                {flightDuration && (
+                  <Text className="text-blue-400 text-xs mt-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                    {flightDuration}
+                  </Text>
+                )}
               </View>
 
               {/* Arrival */}

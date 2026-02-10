@@ -166,15 +166,22 @@ export function useDeleteConnectedAccount() {
 }
 
 /**
- * Trigger a Gmail sync for a connected account
- * This calls the Supabase Edge Function to scan Gmail
+ * Trigger a Gmail sync for a connected account.
+ * This calls the Supabase Edge Function to scan Gmail.
+ * 
+ * Supports auto-pagination: if the edge function returns has_more=true
+ * (it hit the time budget before processing all emails), the client
+ * automatically calls again to continue where it left off.
+ * Max 4 rounds to prevent infinite loops.
+ * 
+ * The onProgress callback is called after each round with cumulative stats.
  */
 export function useSyncGmail() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
 
   return useMutation({
-    mutationFn: async (accountId: string) => {
+    mutationFn: async ({ accountId, onProgress }: { accountId: string; onProgress?: (stats: { emailsProcessed: number; tripsCreated: number; reservationsCreated: number; round: number; scanning: boolean }) => void }) => {
       if (!user?.id) throw new Error('User not authenticated');
 
       // Rate limiting: Check last sync time (5 minutes minimum between syncs)
@@ -196,14 +203,53 @@ export function useSyncGmail() {
         }
       }
 
-      // Call the Supabase Edge Function (auth is handled automatically by the client)
-      const { data, error } = await supabase.functions.invoke('scan-gmail', {
-        body: {
-          accountId,
-        },
-      });
+      // Auto-pagination: loop until has_more is false or max rounds reached
+      const MAX_ROUNDS = 4;
+      let cumulativeStats = {
+        emailsProcessed: 0,
+        tripsCreated: 0,
+        reservationsCreated: 0,
+      };
+      let lastData: any = null;
 
-      if (error) throw error;
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        console.log(`[Gmail Sync] Round ${round}/${MAX_ROUNDS}...`);
+        
+        onProgress?.({
+          ...cumulativeStats,
+          round,
+          scanning: true,
+        });
+
+        const { data, error } = await supabase.functions.invoke('scan-gmail', {
+          body: { accountId },
+        });
+
+        if (error) throw error;
+        lastData = data;
+
+        // Accumulate stats from this round
+        const summary = data?.summary;
+        if (summary) {
+          cumulativeStats.emailsProcessed += summary.emailsProcessed || 0;
+          cumulativeStats.tripsCreated += summary.tripsCreated || 0;
+          cumulativeStats.reservationsCreated += summary.reservationsCreated || 0;
+        }
+
+        onProgress?.({
+          ...cumulativeStats,
+          round,
+          scanning: false,
+        });
+
+        // If no more emails to process, we're done
+        if (!summary?.has_more) {
+          console.log(`[Gmail Sync] Complete after ${round} round(s)`);
+          break;
+        }
+
+        console.log(`[Gmail Sync] has_more=true, continuing to round ${round + 1}...`);
+      }
 
       // Update last_sync timestamp
       await supabase
@@ -212,11 +258,15 @@ export function useSyncGmail() {
         .eq('id', accountId)
         .eq('user_id', user.id);
 
-      return data;
+      // Return cumulative results
+      return {
+        ...lastData,
+        cumulativeStats,
+      };
     },
-    onSuccess: (_, accountId) => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['connected-accounts', user?.id] });
-      queryClient.invalidateQueries({ queryKey: ['connected-account', accountId] });
+      queryClient.invalidateQueries({ queryKey: ['connected-account', variables.accountId] });
       // Also invalidate trips since new ones may have been created
       queryClient.invalidateQueries({ queryKey: ['trips', user?.id] });
     },

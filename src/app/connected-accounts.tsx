@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, Image, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, Image, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -159,13 +159,35 @@ export default function ConnectedAccountsScreen() {
   };
 
   const handleSync = async (accountId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      await syncGmail.mutateAsync(accountId);
+      const result = await syncGmail.mutateAsync({ accountId });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Success', 'Gmail sync completed! Check your trips for new reservations.');
+      
+      // Build a descriptive success message based on cumulative stats (across all rounds)
+      const cumulative = result?.cumulativeStats;
+      const tripsCreated = cumulative?.tripsCreated || result?.summary?.tripsCreated || 0;
+      const reservationsCreated = cumulative?.reservationsCreated || result?.summary?.reservationsCreated || 0;
+      
+      if (tripsCreated > 0) {
+        Alert.alert(
+          '✈️ New Trips Found!',
+          `Added ${tripsCreated} trip${tripsCreated > 1 ? 's' : ''} with ${reservationsCreated} reservation${reservationsCreated !== 1 ? 's' : ''} from your Gmail.`,
+          [
+            { text: 'View Trips', onPress: () => router.push('/(tabs)/trips') },
+            { text: 'OK' },
+          ]
+        );
+      } else {
+        Alert.alert(
+          '✅ Sync Complete',
+          'No new travel emails found. We\'ll keep checking automatically!',
+          [{ text: 'OK' }]
+        );
+      }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to sync Gmail');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Sync Failed', error.message || 'Failed to sync Gmail. Please try again.');
     }
   };
 
@@ -291,15 +313,20 @@ export default function ConnectedAccountsScreen() {
                         <Pressable
                           onPress={() => handleSync(account.id)}
                           disabled={syncGmail.isPending}
-                          className="flex-1 bg-slate-700/50 py-2.5 rounded-xl flex-row items-center justify-center"
+                          className={`flex-1 py-3 rounded-xl flex-row items-center justify-center ${
+                            syncGmail.isPending ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-slate-700/50'
+                          }`}
                         >
                           {syncGmail.isPending ? (
-                            <Loader2 size={16} color="#94A3B8" className="animate-spin" />
+                            <ActivityIndicator size="small" color="#3B82F6" />
                           ) : (
                             <RefreshCw size={16} color="#94A3B8" />
                           )}
-                          <Text className="text-slate-300 text-sm ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
-                            {syncGmail.isPending ? 'Syncing...' : 'Sync Now'}
+                          <Text
+                            className={`text-sm ml-2 ${syncGmail.isPending ? 'text-blue-400' : 'text-slate-300'}`}
+                            style={{ fontFamily: 'DMSans_500Medium' }}
+                          >
+                            {syncGmail.isPending ? 'Scanning emails...' : 'Sync Now'}
                           </Text>
                         </Pressable>
                         <Pressable

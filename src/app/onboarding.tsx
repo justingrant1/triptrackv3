@@ -584,27 +584,39 @@ export default function OnboardingScreen() {
           {/* Next / Get Started Button */}
           <Pressable
             onPress={handleNext}
-            className="rounded-2xl overflow-hidden"
             style={{
               shadowColor: currentSlide.accentColor,
-              shadowOffset: { width: 0, height: 6 },
-              shadowOpacity: 0.35,
-              shadowRadius: 12,
-              elevation: 8,
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.4,
+              shadowRadius: 16,
+              elevation: 10,
             }}
           >
             <LinearGradient
               colors={currentSlide.gradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
-              style={{ paddingVertical: 18, paddingHorizontal: 32 }}
-              className="flex-row items-center justify-center"
+              style={{
+                paddingVertical: 18,
+                paddingHorizontal: 32,
+                borderRadius: 20,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.15)',
+              }}
             >
               <Text
-                className="text-white text-lg font-bold mr-2"
-                style={{ fontFamily: 'DMSans_700Bold' }}
+                style={{
+                  color: '#FFFFFF',
+                  fontSize: 18,
+                  fontFamily: 'DMSans_700Bold',
+                  marginRight: 8,
+                  letterSpacing: 0.3,
+                }}
               >
-                {isLastSlide ? 'Get Started' : 'Next'}
+                {isLastSlide ? 'Get Started' : 'Continue'}
               </Text>
               <ChevronRight size={22} color="#FFFFFF" />
             </LinearGradient>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -150,6 +150,7 @@ export default function ConciergeModal() {
           <View className="flex-1">
             {messages.length === 0 ? (
               /* Empty State */
+              <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
               <View className="flex-1 px-5 justify-center">
                 <Animated.View
                   entering={FadeInDown.duration(600)}
@@ -186,12 +187,14 @@ export default function ConciergeModal() {
                   ))}
                 </View>
               </View>
+              </TouchableWithoutFeedback>
             ) : (
               /* Chat Messages */
               <ScrollView
                 ref={scrollViewRef}
                 className="flex-1 px-5"
                 showsVerticalScrollIndicator={false}
+                keyboardDismissMode="on-drag"
                 contentContainerStyle={{ paddingTop: 20, paddingBottom: 20 }}
               >
                 {messages.map((message, index) => (

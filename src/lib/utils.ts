@@ -11,6 +11,32 @@ export const formatTime = (date: Date): string => {
   });
 };
 
+/**
+ * Format a time string from an ISO timestamp, preserving the original local time.
+ * If the ISO string has no timezone offset (e.g. "2026-03-14T07:15:00"),
+ * we extract the time directly from the string to avoid device timezone conversion.
+ * This is critical for flight times which should display in departure city's local time.
+ */
+export const formatTimeFromISO = (isoString: string): string => {
+  // Check if the string has a timezone offset (Z, +HH:MM, -HH:MM)
+  const hasTimezone = /[Zz]$|[+-]\d{2}:\d{2}$|[+-]\d{4}$/.test(isoString);
+  
+  if (!hasTimezone) {
+    // No timezone — extract time directly from the string to preserve local time
+    const match = isoString.match(/T(\d{2}):(\d{2})/);
+    if (match) {
+      const hours = parseInt(match[1], 10);
+      const minutes = match[2];
+      const period = hours >= 12 ? 'PM' : 'AM';
+      const displayHour = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+      return `${displayHour}:${minutes} ${period}`;
+    }
+  }
+  
+  // Has timezone — use standard Date parsing (converts to device local time)
+  return formatTime(new Date(isoString));
+};
+
 export const formatDate = (date: Date): string => {
   return date.toLocaleDateString('en-US', {
     weekday: 'short',
@@ -430,7 +456,7 @@ export function getContextualTimeInfo(
     };
     return {
       label: labels[reservation.type] || 'Starts',
-      time: formatTime(new Date(reservation.start_time)),
+      time: formatTimeFromISO(reservation.start_time),
     };
   }
 

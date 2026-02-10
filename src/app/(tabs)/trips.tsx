@@ -757,7 +757,7 @@ export default function TripsScreen() {
       console.log('Auto-syncing Gmail (last sync:', gmailAccount.last_sync || 'never', ')');
       
       // Silent background sync — no UI feedback unless it finds new trips
-      syncGmail.mutate(gmailAccount.id, {
+      syncGmail.mutate({ accountId: gmailAccount.id }, {
         onSuccess: (data: any) => {
           if (data?.summary?.tripsCreated > 0 || data?.summary?.reservationsCreated > 0) {
             console.log('Auto-sync found new trips:', data.summary);
@@ -818,7 +818,7 @@ export default function TripsScreen() {
         const gmailAccount = connectedAccounts.find(a => a.provider === 'gmail');
         if (gmailAccount && !syncGmail.isPending) {
           try {
-            await syncGmail.mutateAsync(gmailAccount.id);
+            await syncGmail.mutateAsync({ accountId: gmailAccount.id });
           } catch (err: any) {
             // Silently handle rate limit errors — just means we synced recently
             if (!err.message?.includes('wait')) {
@@ -1240,7 +1240,7 @@ export default function TripsScreen() {
       <UpgradeModal
         visible={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
-        reason="trips"
+        reason="gmail-connect"
       />
     </View>
   );

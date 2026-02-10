@@ -9,9 +9,9 @@ import { createAsyncStoragePersister } from '@/lib/query-persister';
 import { isAuthError } from '@/lib/error-utils';
 import { supabase } from '@/lib/supabase';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useAuthStore } from '@/lib/state/auth-store';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Text } from 'react-native';
 import { useFonts } from 'expo-font';
 import {
   DMSans_400Regular,
@@ -266,6 +266,22 @@ function RootLayoutNav({
     }
   }, [isInitialized, fontsLoaded]);
 
+  // Track how long we've been loading — show helpful message on slow connections
+  const [loadingTooLong, setLoadingTooLong] = React.useState(false);
+  const [loadingVeryLong, setLoadingVeryLong] = React.useState(false);
+  
+  React.useEffect(() => {
+    if (isInitialized && fontsLoaded) return;
+    
+    const timer1 = setTimeout(() => setLoadingTooLong(true), 5000); // 5s
+    const timer2 = setTimeout(() => setLoadingVeryLong(true), 15000); // 15s
+    
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, [isInitialized, fontsLoaded]);
+
   if (!isInitialized || !fontsLoaded) {
     return (
       <View
@@ -274,9 +290,20 @@ function RootLayoutNav({
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: '#000',
+          paddingHorizontal: 32,
         }}
       >
         <ActivityIndicator size="large" color="#3b82f6" />
+        {loadingTooLong && (
+          <Text style={{ color: '#94A3B8', marginTop: 16, fontSize: 14, textAlign: 'center' }}>
+            Loading your trips...
+          </Text>
+        )}
+        {loadingVeryLong && (
+          <Text style={{ color: '#64748B', marginTop: 8, fontSize: 13, textAlign: 'center' }}>
+            Slow connection detected. Please check your internet and try again.
+          </Text>
+        )}
       </View>
     );
   }

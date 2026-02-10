@@ -47,8 +47,8 @@ Return ONLY valid JSON in this exact format:
       "type": "flight" | "hotel" | "car" | "train" | "meeting" | "event",
       "title": "Main title (e.g., 'AA 182 to JFK', 'Marriott Downtown')",
       "subtitle": "Secondary info (e.g., 'American Airlines', 'Deluxe King Room')",
-      "start_time": "YYYY-MM-DDTHH:MM:SS (ISO 8601)",
-      "end_time": "YYYY-MM-DDTHH:MM:SS (optional, for hotels/events)",
+      "start_time": "YYYY-MM-DDTHH:MM:SS (ISO 8601, LOCAL time at the location — do NOT append Z or timezone offset)",
+      "end_time": "YYYY-MM-DDTHH:MM:SS (optional, LOCAL time — do NOT append Z or timezone offset)",
       "location": "Airport code or city",
       "address": "Full address if available",
       "confirmation_number": "Confirmation/booking number",
@@ -66,8 +66,9 @@ Return ONLY valid JSON in this exact format:
 
 Rules:
 - Extract ALL reservations from the email (flights, hotels, cars, etc.)
-- Use ISO 8601 format for all timestamps
-- Include timezone if available, otherwise use UTC
+- Use ISO 8601 format for all timestamps (YYYY-MM-DDTHH:MM:SS)
+- IMPORTANT: Always use LOCAL time at the departure/arrival/check-in location. Do NOT append Z or timezone offsets.
+- For flights: departure time = local time at departure airport, arrival time = local time at arrival airport
 - For flights: extract airline, flight number, departure/arrival times, airports, seat, gate
 - For hotels: extract hotel name, check-in/out times, room type, address
 - For cars: extract company, pickup/return times, vehicle type, location

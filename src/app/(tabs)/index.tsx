@@ -979,12 +979,12 @@ export default function TodayScreen() {
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  router.push('/(tabs)/profile');
+                  router.push('/(tabs)/trips');
                 }}
                 className="mt-4 bg-blue-500 px-5 py-2.5 rounded-full"
               >
                 <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                  Learn How
+                  Add a Trip
                 </Text>
               </Pressable>
             </Animated.View>

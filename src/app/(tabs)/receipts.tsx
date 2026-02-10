@@ -393,6 +393,11 @@ export default function ReceiptsScreen() {
 
   const handleScanReceipt = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (!isPro) {
+      setUpgradeReason('receipt-ocr' as any);
+      setShowUpgradeModal(true);
+      return;
+    }
     router.push('/add-receipt');
   };
 
@@ -581,14 +586,27 @@ export default function ReceiptsScreen() {
                 <Camera size={24} color="#3B82F6" />
               </View>
               <View className="flex-1 ml-3">
-                <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                  Scan Receipt
-                </Text>
+                <View className="flex-row items-center">
+                  <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    Scan Receipt
+                  </Text>
+                  {!isPro && (
+                    <View className="bg-blue-500/20 px-2 py-0.5 rounded-full ml-2">
+                      <Text className="text-blue-400 text-xs font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                        PRO
+                      </Text>
+                    </View>
+                  )}
+                </View>
                 <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
                   Use camera to capture and auto-extract
                 </Text>
               </View>
-              <ChevronRight size={20} color="#64748B" />
+              {isPro ? (
+                <ChevronRight size={20} color="#64748B" />
+              ) : (
+                <Crown size={20} color="#3B82F6" />
+              )}
             </Pressable>
 
             {/* Scan Email for Receipts — Premium Feature */}

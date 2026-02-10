@@ -8,8 +8,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createChatCompletion, createStreamingChatCompletion, ChatMessage } from '@/lib/openai';
 import { useTrips } from './useTrips';
 import { useUpcomingReservations } from './useReservations';
+import { useAuthStore } from '@/lib/state/auth-store';
 
-const CHAT_STORAGE_KEY = 'triptrack_chat_history';
+const CHAT_STORAGE_KEY_PREFIX = 'triptrack_chat_history_';
 const MAX_PERSISTED_MESSAGES = 50; // Keep last 50 messages to avoid storage bloat
 
 export interface Message {
@@ -37,17 +38,27 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
 
+  // Get current user for scoped storage
+  const { user } = useAuthStore();
+  const storageKey = `${CHAT_STORAGE_KEY_PREFIX}${user?.id ?? 'anonymous'}`;
+
   // Get user's trip context for AI
   const { data: trips = [] } = useTrips();
   const { data: upcomingReservations = [] } = useUpcomingReservations();
 
   // ─── Persistence ──────────────────────────────────────────────────────────
 
-  /** Load messages from AsyncStorage on mount */
+  // Clear messages when user changes (logout/login)
+  useEffect(() => {
+    setMessages([]);
+    setIsHydrated(false);
+  }, [user?.id]);
+
+  /** Load messages from AsyncStorage on mount / user change */
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(CHAT_STORAGE_KEY);
+        const raw = await AsyncStorage.getItem(storageKey);
         if (raw) {
           const persisted: PersistedMessage[] = JSON.parse(raw);
           const hydrated: Message[] = persisted.map((m) => ({
@@ -78,7 +89,7 @@ export function useChat() {
             content: m.content,
             timestamp: m.timestamp.toISOString(),
           }));
-        await AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(toSave));
+        await AsyncStorage.setItem(storageKey, JSON.stringify(toSave));
       } catch (err) {
         console.warn('Failed to save chat history:', err);
       }
@@ -259,7 +270,7 @@ Be concise, friendly, and helpful. Use emojis occasionally to make responses mor
     setMessages([]);
     setError(null);
     try {
-      await AsyncStorage.removeItem(CHAT_STORAGE_KEY);
+      await AsyncStorage.removeItem(storageKey);
     } catch (err) {
       console.warn('Failed to clear chat history:', err);
     }
