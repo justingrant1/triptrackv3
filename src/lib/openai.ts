@@ -53,6 +53,15 @@ async function getAuthToken(): Promise<string> {
 }
 
 /**
+ * Get the Supabase anon key for API gateway authentication
+ */
+function getAnonKey(): string {
+  const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  if (!key) throw new Error('EXPO_PUBLIC_SUPABASE_ANON_KEY not configured');
+  return key;
+}
+
+/**
  * Get the Supabase Functions URL
  */
 function getFunctionsUrl(): string {
@@ -75,6 +84,7 @@ export async function createChatCompletion(
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
+      'apikey': getAnonKey(),
     },
     body: JSON.stringify({
       messages: options.messages,
@@ -150,6 +160,7 @@ export async function extractReceiptData(imageUrlOrBase64: string): Promise<Rece
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
+      'apikey': getAnonKey(),
     },
     body: JSON.stringify({ imageUrl: imageUrlOrBase64 }),
   });

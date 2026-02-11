@@ -29,6 +29,7 @@ import { useForwardingAddress } from '@/lib/hooks/useProfile';
 import { useGoogleAuthRequest, exchangeCodeForTokens } from '@/lib/google-auth';
 import { ResponseType } from 'expo-auth-session';
 import * as Clipboard from 'expo-clipboard';
+import { scheduleNotification } from '@/lib/notifications';
 
 const providerInfo = {
   gmail: {
@@ -55,9 +56,16 @@ export default function ConnectedAccountsScreen() {
   const deleteAccount = useDeleteConnectedAccount();
   const syncGmail = useSyncGmail();
   const isSyncing = useSyncStore((s) => s.isSyncing);
+  const syncStatusMessage = useSyncStore((s) => s.statusMessage);
 
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
   const [copiedAddress, setCopiedAddress] = React.useState(false);
+  const [syncResult, setSyncResult] = React.useState<{
+    type: 'success' | 'in-progress' | 'no-new' | 'error';
+    message: string;
+    tripsCreated?: number;
+    reservationsCreated?: number;
+  } | null>(null);
   const { canConnectGmail } = useSubscription();
   const { data: forwardingAddress, isLoading: loadingAddress } = useForwardingAddress();
 
@@ -162,34 +170,58 @@ export default function ConnectedAccountsScreen() {
 
   const handleSync = async (accountId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSyncResult(null); // Clear previous result
     try {
       const result = await syncGmail.mutateAsync({ accountId });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      
-      // Build a descriptive success message based on cumulative stats (across all rounds)
+
+      // If the client timed out, the edge function may still be running server-side
+      if (result?.timedOut) {
+        setSyncResult({
+          type: 'in-progress',
+          message: 'Your emails are still being processed in the background. Check back in a minute to see new trips!',
+        });
+        return;
+      }
+
+      // Build a descriptive success message
       const cumulative = result?.cumulativeStats;
       const tripsCreated = cumulative?.tripsCreated || result?.summary?.tripsCreated || 0;
       const reservationsCreated = cumulative?.reservationsCreated || result?.summary?.reservationsCreated || 0;
       
       if (tripsCreated > 0) {
-        Alert.alert(
+        setSyncResult({
+          type: 'success',
+          message: `Added ${tripsCreated} trip${tripsCreated > 1 ? 's' : ''} with ${reservationsCreated} reservation${reservationsCreated !== 1 ? 's' : ''} from your Gmail.`,
+          tripsCreated,
+          reservationsCreated,
+        });
+        // Send push notification so user sees it even if app is backgrounded
+        scheduleNotification(
           '✈️ New Trips Found!',
           `Added ${tripsCreated} trip${tripsCreated > 1 ? 's' : ''} with ${reservationsCreated} reservation${reservationsCreated !== 1 ? 's' : ''} from your Gmail.`,
-          [
-            { text: 'View Trips', onPress: () => router.push('/(tabs)/trips') },
-            { text: 'OK' },
-          ]
-        );
+          1, // 1 second delay
+          { type: 'gmail_sync', action: 'view_trips' }
+        ).catch(() => {}); // Don't fail sync if notification fails
       } else {
-        Alert.alert(
-          '✅ Sync Complete',
+        setSyncResult({
+          type: 'no-new',
+          message: 'No new travel emails found. We\'ll keep checking automatically!',
+        });
+        // Send push notification for completion
+        scheduleNotification(
+          '✅ Gmail Sync Complete',
           'No new travel emails found. We\'ll keep checking automatically!',
-          [{ text: 'OK' }]
-        );
+          1,
+          { type: 'gmail_sync' }
+        ).catch(() => {});
       }
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Sync Failed', error.message || 'Failed to sync Gmail. Please try again.');
+      setSyncResult({
+        type: 'error',
+        message: error.message || 'Failed to sync Gmail. Please try again.',
+      });
     }
   };
 
@@ -253,6 +285,95 @@ export default function ConnectedAccountsScreen() {
                   </View>
                 </View>
               </LinearGradient>
+            </Animated.View>
+          )}
+
+          {/* Sync Result Banner */}
+          {syncResult && !isSyncing && (
+            <Animated.View
+              entering={FadeInDown.duration(400)}
+              className="mb-6"
+            >
+              <View
+                style={{
+                  borderRadius: 16,
+                  padding: 16,
+                  backgroundColor:
+                    syncResult.type === 'success' ? 'rgba(16, 185, 129, 0.15)' :
+                    syncResult.type === 'in-progress' ? 'rgba(59, 130, 246, 0.15)' :
+                    syncResult.type === 'error' ? 'rgba(239, 68, 68, 0.15)' :
+                    'rgba(100, 116, 139, 0.15)',
+                  borderWidth: 1,
+                  borderColor:
+                    syncResult.type === 'success' ? 'rgba(16, 185, 129, 0.3)' :
+                    syncResult.type === 'in-progress' ? 'rgba(59, 130, 246, 0.3)' :
+                    syncResult.type === 'error' ? 'rgba(239, 68, 68, 0.3)' :
+                    'rgba(100, 116, 139, 0.3)',
+                }}
+              >
+                <View className="flex-row items-start">
+                  <Text style={{ fontSize: 24, marginRight: 12 }}>
+                    {syncResult.type === 'success' ? '✈️' :
+                     syncResult.type === 'in-progress' ? '⏳' :
+                     syncResult.type === 'error' ? '❌' : '✅'}
+                  </Text>
+                  <View className="flex-1">
+                    <Text
+                      className="font-bold mb-1"
+                      style={{
+                        fontFamily: 'DMSans_700Bold',
+                        fontSize: 16,
+                        color:
+                          syncResult.type === 'success' ? '#10B981' :
+                          syncResult.type === 'in-progress' ? '#3B82F6' :
+                          syncResult.type === 'error' ? '#EF4444' : '#94A3B8',
+                      }}
+                    >
+                      {syncResult.type === 'success' ? 'New Trips Found!' :
+                       syncResult.type === 'in-progress' ? 'Sync In Progress' :
+                       syncResult.type === 'error' ? 'Sync Failed' : 'Sync Complete'}
+                    </Text>
+                    <Text
+                      className="text-slate-300 text-sm"
+                      style={{ fontFamily: 'DMSans_400Regular', lineHeight: 20 }}
+                    >
+                      {syncResult.message}
+                    </Text>
+                    {syncResult.type === 'success' && (
+                      <Pressable
+                        onPress={() => {
+                          setSyncResult(null);
+                          router.push('/(tabs)/trips');
+                        }}
+                        className="mt-3 bg-emerald-500/20 self-start px-4 py-2 rounded-full"
+                      >
+                        <Text className="text-emerald-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                          View Trips →
+                        </Text>
+                      </Pressable>
+                    )}
+                    {syncResult.type === 'in-progress' && (
+                      <Pressable
+                        onPress={() => {
+                          setSyncResult(null);
+                          router.push('/(tabs)/trips');
+                        }}
+                        className="mt-3 bg-blue-500/20 self-start px-4 py-2 rounded-full"
+                      >
+                        <Text className="text-blue-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                          View Trips →
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                  <Pressable
+                    onPress={() => setSyncResult(null)}
+                    className="p-1"
+                  >
+                    <Text className="text-slate-500" style={{ fontSize: 18 }}>✕</Text>
+                  </Pressable>
+                </View>
+              </View>
             </Animated.View>
           )}
 
@@ -329,7 +450,7 @@ export default function ConnectedAccountsScreen() {
                               className={`text-sm ml-2 ${isSyncing ? 'text-blue-400' : 'text-slate-300'}`}
                               style={{ fontFamily: 'DMSans_500Medium' }}
                             >
-                              {isSyncing ? 'Scanning emails...' : 'Sync Now'}
+                              {isSyncing ? (syncStatusMessage || 'Scanning emails...') : 'Sync Now'}
                             </Text>
                           </Pressable>
                           <Pressable

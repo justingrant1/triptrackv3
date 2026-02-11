@@ -57,6 +57,13 @@ interface PdfAttachmentInfo {
   size: number;
 }
 
+interface ImageAttachmentInfo {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 interface ClassificationResult {
   is_real_trip: boolean;
   confidence: number;
@@ -74,6 +81,8 @@ interface ParsedTripData {
   confirmation_number: string | null;
   details: Record<string, any>;
   destination: string;
+  country: string | null;
+  region: string | null;
   trip_dates: { start: string; end: string };
   error?: string;
 }
@@ -434,6 +443,121 @@ function findPdfAttachments(payload: any): PdfAttachmentInfo[] {
 }
 
 /**
+ * Recursively find image attachments in the Gmail message payload.
+ * Returns attachment info for JPEG/PNG images under 5MB.
+ * These are typically screenshots of flight confirmations, boarding passes, etc.
+ */
+function findImageAttachments(payload: any): ImageAttachmentInfo[] {
+  const images: ImageAttachmentInfo[] = [];
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+  const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+
+  function walkParts(part: any): void {
+    if (!part) return;
+
+    const mimeType = (part.mimeType || '').toLowerCase();
+    const filename = part.filename || '';
+
+    // Check if this is an image attachment (must have attachmentId and filename)
+    if (
+      IMAGE_MIME_TYPES.has(mimeType) &&
+      part.body?.attachmentId &&
+      filename
+    ) {
+      const size = part.body.size || 0;
+      if (size > 1000 && size < MAX_IMAGE_SIZE) { // Skip tiny images (tracking pixels, icons)
+        images.push({
+          attachmentId: part.body.attachmentId,
+          filename,
+          mimeType,
+          size,
+        });
+      }
+    }
+
+    // Recurse into sub-parts
+    if (part.parts && Array.isArray(part.parts)) {
+      for (const subPart of part.parts) {
+        walkParts(subPart);
+      }
+    }
+  }
+
+  walkParts(payload);
+  return images;
+}
+
+/**
+ * Extract text from an image attachment using GPT-4 Vision (OCR).
+ * Sends the image as base64 to GPT-4o and asks it to extract all visible text.
+ * This handles screenshots of flight confirmations, boarding passes, hotel bookings, etc.
+ */
+async function extractTextFromImage(
+  base64Data: string,
+  mimeType: string,
+  filename: string
+): Promise<string> {
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+  if (!openaiApiKey) {
+    console.warn('No OpenAI API key — skipping image OCR');
+    return '';
+  }
+
+  try {
+    console.log(`Running GPT-4 Vision OCR on image: ${filename} (${mimeType})`);
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an OCR assistant. Extract ALL visible text from the image. This is likely a screenshot of a travel confirmation, boarding pass, flight itinerary, or hotel booking. Preserve the structure and include all dates, times, flight numbers, confirmation codes, names, airports, hotels, and any other travel details you can see. Output the extracted text only, no commentary.',
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Extract all text from this travel document image:',
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType};base64,${base64Data}`,
+                  detail: 'high',
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0,
+        max_tokens: 2000,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn(`GPT-4 Vision OCR API error: ${response.status} ${errText}`);
+      return '';
+    }
+
+    const data = await response.json();
+    const extractedText = data.choices?.[0]?.message?.content || '';
+    console.log(`Image OCR extracted ${extractedText.length} chars from ${filename}`);
+    return extractedText;
+  } catch (error) {
+    console.warn(`Image OCR failed for ${filename}:`, error);
+    return '';
+  }
+}
+
+/**
  * Fetch full email content from Gmail, including headers, body, and attachment info.
  */
 async function getGmailMessage(
@@ -511,24 +635,72 @@ async function downloadAttachment(
 }
 
 /**
- * Extract text content from a PDF using OpenAI.
+ * Extract text content from a PDF using GPT-4o.
  * 
- * GPT-4o vision does NOT support PDF files directly — only images.
- * Instead, we send the raw base64 PDF data as text to GPT-4o-mini
- * and ask it to extract any readable text content.
- * For most travel PDFs (boarding passes, itineraries), the text is
- * embedded and can be partially recovered from the base64 data.
- * 
- * A more robust approach would use a dedicated PDF parser library,
- * but this works for the edge function environment.
+ * GPT-4o supports PDF files as input via the file content type.
+ * We send the base64-encoded PDF and ask it to extract all readable text,
+ * focusing on travel-relevant details like dates, confirmation numbers,
+ * flight numbers, hotel names, etc.
  */
 async function extractTextFromPdf(base64Data: string): Promise<string> {
-  // Skip PDF extraction for now — the email body usually contains
-  // all the same information. PDF extraction requires a proper PDF
-  // parsing library which isn't available in the Deno edge runtime.
-  // The email body text + HTML extraction already captures the key details.
-  console.log('PDF extraction skipped — relying on email body text instead');
-  return '';
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+  if (!openaiApiKey) {
+    console.warn('No OpenAI API key — skipping PDF extraction');
+    return '';
+  }
+
+  try {
+    console.log(`Running GPT-4o PDF extraction (${Math.round(base64Data.length / 1024)}KB base64)`);
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a document text extractor. Extract ALL readable text from the PDF document. This is likely a travel confirmation, boarding pass, flight itinerary, hotel booking, or car rental agreement. Preserve the structure and include all dates, times, flight numbers, confirmation codes, names, airports, hotels, addresses, and any other travel details. Output the extracted text only, no commentary.',
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Extract all text from this travel document PDF:',
+              },
+              {
+                type: 'file',
+                file: {
+                  filename: 'document.pdf',
+                  file_data: `data:application/pdf;base64,${base64Data}`,
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0,
+        max_tokens: 3000,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn(`GPT-4o PDF extraction API error: ${response.status} ${errText}`);
+      return '';
+    }
+
+    const data = await response.json();
+    const extractedText = data.choices?.[0]?.message?.content || '';
+    console.log(`PDF extraction got ${extractedText.length} chars`);
+    return extractedText;
+  } catch (error) {
+    console.warn('PDF extraction failed:', error);
+    return '';
+  }
 }
 
 // ============================================================
@@ -682,7 +854,10 @@ Return JSON in this format:
         // For trains: "Train Number", "Departure Station", "Arrival Station", "Seat", "Car Number"
         // For cruises: "Ship Name", "Cabin", "Embarkation Port", "Disembarkation Port"
       },
+      "status": "confirmed" or "cancelled" (use "cancelled" ONLY if the email is explicitly a cancellation notice),
       "destination": "FINAL destination city for trip grouping (same for all legs in a connecting itinerary)",
+      "country": "Country name (e.g., 'Indonesia', 'United States', 'Japan')",
+      "region": "State, province, island, or sub-region (e.g., 'Bali', 'California', 'Hokkaido'). Use null if not applicable.",
       "trip_dates": {
         "start": "YYYY-MM-DD (earliest date across ALL legs)",
         "end": "YYYY-MM-DD (latest date across ALL legs)"
@@ -693,8 +868,10 @@ Return JSON in this format:
 
 Rules:
 - Each flight leg = separate reservation. MIA→LAX is one, LAX→HND is another.
-- All reservations from the same email share the same "destination" (the FINAL destination) and "trip_dates" (spanning all legs).
+- All reservations from the same email share the same "destination" (the FINAL destination), "country", "region", and "trip_dates" (spanning all legs).
 - For connecting flights, the destination is the final arrival city, not the layover.
+- "country" should be the full country name of the final destination.
+- "region" should be the state, province, island, or well-known sub-region (e.g., "Bali" for anywhere in Bali, "Tuscany" for anywhere in Tuscany, "California" for anywhere in California). Use null if not meaningful.
 - Use null for any field you cannot determine — never use empty strings.
 - Resolve relative dates like "tomorrow" or "next Friday" using today's date (${today}).
 - If this is NOT a travel-related email, return: { "error": "Not a travel email" }`;
@@ -925,9 +1102,70 @@ function isTripTooOld(endDate: string): boolean {
 }
 
 /**
+ * Check if two destinations are in the same geographic region.
+ * Uses heuristic string matching on destination, country, and region fields.
+ * Returns true if they likely belong to the same trip.
+ */
+function areDestinationsRelated(
+  newDestination: string,
+  newCountry: string | null,
+  newRegion: string | null,
+  existingDestination: string,
+  existingName: string
+): boolean {
+  const normalize = (s: string) => s.toLowerCase().trim();
+  const newDest = normalize(newDestination);
+  const existDest = normalize(existingDestination);
+  const existName = normalize(existingName);
+
+  // Exact match
+  if (newDest === existDest) return true;
+
+  // One destination contains the other (e.g., "Denpasar" vs "Denpasar, Bali")
+  if (newDest.includes(existDest) || existDest.includes(newDest)) return true;
+
+  // Check if the trip name contains the new destination or vice versa
+  // e.g., trip "Trip to Ubud" and new destination "Denpasar, Bali"
+  if (existName.includes(newDest) || newDest.includes(existName.replace('trip to ', ''))) return true;
+
+  // Extract words from both destinations for overlap checking
+  const newWords = new Set(newDest.split(/[\s,]+/).filter(w => w.length > 2));
+  const existWords = new Set(existDest.split(/[\s,]+/).filter(w => w.length > 2));
+
+  // Check for shared significant words (city names, country names, regions)
+  // e.g., "Denpasar, Bali" and "Ubud, Bali" both contain "Bali"
+  for (const word of newWords) {
+    if (existWords.has(word)) return true;
+  }
+
+  // Check if region matches any word in existing destination or trip name
+  if (newRegion) {
+    const region = normalize(newRegion);
+    if (existDest.includes(region) || existName.includes(region)) return true;
+    // Check if existing destination words match the region
+    for (const word of existWords) {
+      if (region.includes(word) || word.includes(region)) return true;
+    }
+  }
+
+  // Check if country matches (and both are in the same country)
+  // This is a weaker signal — only use if the trip name also hints at the country
+  if (newCountry) {
+    const country = normalize(newCountry);
+    if (existDest.includes(country) || existName.includes(country)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Find an existing trip that matches the destination and overlapping dates,
- * or create a new one. Also expands trip dates if the new reservation
- * extends beyond the existing trip's date range.
+ * or create a new one. Uses tiered matching:
+ * 
+ * Tier 1: Exact destination + overlapping dates (original behavior)
+ * Tier 2: Fuzzy destination (same region/country) + overlapping/adjacent dates (±3 day buffer)
+ * 
+ * Also expands trip dates if the new reservation extends beyond the existing trip's date range.
  */
 async function findOrCreateTrip(
   supabase: any,
@@ -935,47 +1173,57 @@ async function findOrCreateTrip(
   parsed: ParsedTripData,
   stats: ScanStats
 ): Promise<string | null> {
-  const { destination, trip_dates } = parsed;
+  const { destination, country, region, trip_dates } = parsed;
 
   if (!destination || !trip_dates?.start || !trip_dates?.end) {
     console.warn('Missing destination or trip dates, cannot create trip');
     return null;
   }
 
-  // Look for existing trip with same destination and overlapping dates
-  const { data: existingTrips } = await supabase
+  // === Tier 1: Exact destination match + overlapping dates ===
+  const { data: exactMatches } = await supabase
     .from('trips')
-    .select('id, start_date, end_date')
+    .select('id, start_date, end_date, name, destination')
     .eq('user_id', userId)
     .eq('destination', destination)
     .gte('end_date', trip_dates.start)
     .lte('start_date', trip_dates.end);
 
-  if (existingTrips && existingTrips.length > 0) {
-    const trip = existingTrips[0];
-    console.log(`Using existing trip: ${trip.id}`);
-
-    // Expand trip dates if reservation extends beyond
-    const updates: Record<string, string> = {};
-    if (trip_dates.start < trip.start_date) {
-      updates.start_date = trip_dates.start;
-    }
-    if (trip_dates.end > trip.end_date) {
-      updates.end_date = trip_dates.end;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await supabase
-        .from('trips')
-        .update(updates)
-        .eq('id', trip.id);
-      console.log(`Expanded trip dates:`, updates);
-    }
-
-    return trip.id;
+  if (exactMatches && exactMatches.length > 0) {
+    const trip = exactMatches[0];
+    console.log(`[Tier 1] Exact destination match — using trip: ${trip.id} (${trip.name})`);
+    return await expandTripDatesAndReturn(supabase, trip, trip_dates);
   }
 
-  // Create new trip
+  // === Tier 2: Fuzzy destination + overlapping/adjacent dates (±3 day buffer) ===
+  // Add a 3-day buffer on each side to catch adjacent bookings
+  // e.g., flight arrives Jan 10, hotel check-in Jan 10 but trip was created as Jan 8-10
+  const bufferDays = 3;
+  const bufferedStart = new Date(trip_dates.start);
+  bufferedStart.setDate(bufferedStart.getDate() - bufferDays);
+  const bufferedEnd = new Date(trip_dates.end);
+  bufferedEnd.setDate(bufferedEnd.getDate() + bufferDays);
+  const bufferedStartStr = bufferedStart.toISOString().split('T')[0];
+  const bufferedEndStr = bufferedEnd.toISOString().split('T')[0];
+
+  const { data: nearbyTrips } = await supabase
+    .from('trips')
+    .select('id, start_date, end_date, name, destination')
+    .eq('user_id', userId)
+    .gte('end_date', bufferedStartStr)
+    .lte('start_date', bufferedEndStr);
+
+  if (nearbyTrips && nearbyTrips.length > 0) {
+    // Check each nearby trip for geographic relatedness
+    for (const trip of nearbyTrips) {
+      if (areDestinationsRelated(destination, country, region, trip.destination, trip.name)) {
+        console.log(`[Tier 2] Fuzzy destination match — "${destination}" ≈ "${trip.destination}" (trip: ${trip.name}) — using trip: ${trip.id}`);
+        return await expandTripDatesAndReturn(supabase, trip, trip_dates);
+      }
+    }
+  }
+
+  // === No match found — create new trip ===
   const { data: newTrip, error: tripError } = await supabase
     .from('trips')
     .insert({
@@ -997,6 +1245,33 @@ async function findOrCreateTrip(
   stats.tripsCreated++;
   console.log(`Created new trip: ${newTrip.id} — ${destination}`);
   return newTrip.id;
+}
+
+/**
+ * Helper: expand trip dates if the new reservation extends beyond, then return trip ID.
+ */
+async function expandTripDatesAndReturn(
+  supabase: any,
+  trip: { id: string; start_date: string; end_date: string },
+  trip_dates: { start: string; end: string }
+): Promise<string> {
+  const updates: Record<string, string> = {};
+  if (trip_dates.start < trip.start_date) {
+    updates.start_date = trip_dates.start;
+  }
+  if (trip_dates.end > trip.end_date) {
+    updates.end_date = trip_dates.end;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await supabase
+      .from('trips')
+      .update(updates)
+      .eq('id', trip.id);
+    console.log(`Expanded trip dates:`, updates);
+  }
+
+  return trip.id;
 }
 
 // ============================================================
@@ -1591,27 +1866,22 @@ serve(async (req) => {
         // Step 3: Check known travel sender (fast-pass)
         const knownSender = isKnownTravelSender(emailDetail.from);
 
-        // Step 4: If unknown sender, run Stage 1 classification
-        if (!knownSender) {
-          const classification = await classifyEmail(
-            emailDetail.subject,
-            emailDetail.from,
-            emailDetail.body
-          );
+        // Step 3b: Check if subject contains strong travel keywords (subject fast-pass)
+        // This catches self-forwarded emails, friend-forwarded emails, etc.
+        const travelSubjectKeywords = [
+          'flight confirmation', 'travel confirmation', 'hotel confirmation',
+          'booking confirmation', 'trip confirmation', 'e-ticket',
+          'boarding pass', 'itinerary', 'reservation confirmation',
+          'car rental', 'train ticket', 'cruise confirmation',
+          'hotel reservation', 'flight itinerary', 'travel itinerary',
+        ];
+        const subjectLower = emailDetail.subject.toLowerCase();
+        const hasStrongTravelSubject = travelSubjectKeywords.some(kw => subjectLower.includes(kw));
 
-          if (!classification.is_real_trip || classification.confidence < 0.7) {
-            console.log(`Rejected by classifier: ${classification.rejection_reason} (confidence: ${classification.confidence})`);
-            await markMessageProcessed(supabase, user.id, message.id, 'rejected_by_classifier');
-            stats.skippedByClassifier++;
-            continue;
-          }
+        // Step 4: Extract attachments BEFORE classification
+        // This ensures image OCR text is available for the classifier
 
-          console.log(`Classified as travel email (confidence: ${classification.confidence})`);
-        } else {
-          console.log(`Known travel sender — fast-pass`);
-        }
-
-        // Step 5: Extract PDF attachment text (first PDF only)
+        // Step 4a: Extract PDF attachment text (first PDF only)
         let pdfText = '';
         if (emailDetail.pdfAttachments.length > 0) {
           const firstPdf = emailDetail.pdfAttachments[0];
@@ -1629,12 +1899,72 @@ serve(async (req) => {
             }
           } catch (pdfError) {
             console.warn(`PDF extraction failed for ${firstPdf.filename}:`, pdfError);
-            // Continue without PDF text
           }
         }
 
+        // Step 4b: Extract image attachment text via GPT-4 Vision OCR
+        // Run BEFORE classification so the classifier can see the image content
+        let imageOcrText = '';
+        const imageAttachments = findImageAttachments(emailDetail.rawPayload);
+        if (imageAttachments.length > 0) {
+          const firstImage = imageAttachments[0];
+          console.log(`Found image attachment: ${firstImage.filename} (${Math.round(firstImage.size / 1024)}KB, ${firstImage.mimeType})`);
+          
+          // Run OCR if the email body is thin (< 500 chars) OR has a strong travel subject
+          const bodyLength = emailDetail.body.trim().length;
+          const shouldOcr = bodyLength < 500 || hasStrongTravelSubject;
+          
+          if (shouldOcr) {
+            console.log(`Running image OCR (body: ${bodyLength} chars, travel subject: ${hasStrongTravelSubject})`);
+            try {
+              const imageBase64 = await downloadAttachment(
+                accessToken,
+                message.id,
+                firstImage.attachmentId
+              );
+              imageOcrText = await extractTextFromImage(imageBase64, firstImage.mimeType, firstImage.filename);
+              if (imageOcrText) {
+                console.log(`Image OCR extracted ${imageOcrText.length} chars`);
+              }
+            } catch (imgError) {
+              console.warn(`Image OCR failed for ${firstImage.filename}:`, imgError);
+            }
+          } else {
+            console.log(`Email body is rich (${bodyLength} chars) and no travel subject — skipping image OCR`);
+          }
+        }
+
+        // Step 5: Classification — skip if known sender OR strong travel subject with content
+        const hasContentFromAttachments = !!(pdfText || imageOcrText);
+        const skipClassification = knownSender || (hasStrongTravelSubject && (emailDetail.body.trim().length > 50 || hasContentFromAttachments));
+
+        if (skipClassification) {
+          console.log(`Fast-pass: ${knownSender ? 'known travel sender' : 'strong travel subject' + (hasContentFromAttachments ? ' + attachment content' : '')}`);
+        } else {
+          // Combine body with OCR text for better classification
+          const classificationBody = [emailDetail.body, imageOcrText, pdfText].filter(Boolean).join('\n\n');
+          
+          const classification = await classifyEmail(
+            emailDetail.subject,
+            emailDetail.from,
+            classificationBody
+          );
+
+          if (!classification.is_real_trip || classification.confidence < 0.7) {
+            console.log(`Rejected by classifier: ${classification.rejection_reason} (confidence: ${classification.confidence})`);
+            await markMessageProcessed(supabase, user.id, message.id, 'rejected_by_classifier');
+            stats.skippedByClassifier++;
+            continue;
+          }
+
+          console.log(`Classified as travel email (confidence: ${classification.confidence})`);
+        }
+
+        // Combine supplementary text from PDF and image OCR
+        const supplementaryText = [pdfText, imageOcrText].filter(Boolean).join('\n\n');
+
         // Step 6: Run Stage 2 full AI extraction (returns array of reservations)
-        const parseResult = await parseEmailWithAI(emailDetail.body, emailDetail.subject, pdfText || undefined);
+        const parseResult = await parseEmailWithAI(emailDetail.body, emailDetail.subject, supplementaryText || undefined);
 
         // Step 7: Check if parser returned an error
         if (parseResult.error || parseResult.reservations.length === 0) {
@@ -1692,6 +2022,48 @@ serve(async (req) => {
           // Map car_rental to car for database compatibility
           const reservationType = reservation.type === 'car_rental' ? 'car' : reservation.type;
 
+          // Use AI-detected status (supports cancellation emails)
+          const reservationStatus = (reservation as any).status === 'cancelled' ? 'cancelled' : 'confirmed';
+
+          // If this is a cancellation email, try to update existing reservation instead of creating new
+          if (reservationStatus === 'cancelled' && reservation.confirmation_number) {
+            const { data: existingRes } = await supabase
+              .from('reservations')
+              .select('id')
+              .eq('trip_id', tripId)
+              .eq('confirmation_number', reservation.confirmation_number)
+              .eq('type', reservationType)
+              .maybeSingle();
+
+            if (existingRes) {
+              await supabase
+                .from('reservations')
+                .update({ status: 'cancelled' })
+                .eq('id', existingRes.id);
+              console.log(`Updated existing reservation to cancelled: ${reservation.title} (${existingRes.id})`);
+              stats.reservationsCreated++;
+
+              // Check if ALL reservations in this trip are now cancelled → mark trip completed
+              const { data: allTripRes } = await supabase
+                .from('reservations')
+                .select('id, status')
+                .eq('trip_id', tripId);
+
+              if (allTripRes && allTripRes.length > 0) {
+                const allCancelled = allTripRes.every((r: any) => r.status === 'cancelled');
+                if (allCancelled) {
+                  await supabase
+                    .from('trips')
+                    .update({ status: 'completed', updated_at: new Date().toISOString() })
+                    .eq('id', tripId);
+                  console.log(`All reservations cancelled — marked trip ${tripId} as completed`);
+                }
+              }
+
+              continue;
+            }
+          }
+
           const { error: reservationError } = await supabase
             .from('reservations')
             .insert({
@@ -1705,7 +2077,7 @@ serve(async (req) => {
               address: reservation.address || null,
               confirmation_number: reservation.confirmation_number || null,
               details: reservation.details || {},
-              status: 'confirmed',
+              status: reservationStatus,
             });
 
           if (reservationError) {
@@ -1715,7 +2087,7 @@ serve(async (req) => {
           }
 
           stats.reservationsCreated++;
-          console.log(`Created reservation: ${reservation.title}`);
+          console.log(`Created reservation: ${reservation.title} (status: ${reservationStatus})`);
         }
 
         stats.emailsProcessed++;

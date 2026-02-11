@@ -7,6 +7,9 @@ import {
   Plane,
   Building2,
   Car,
+  Train,
+  Users,
+  Ticket,
   Calendar,
   ChevronRight,
   Plus,
@@ -468,6 +471,30 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
                         </Text>
                       </View>
                     )}
+                    {reservationCounts.train > 0 && (
+                      <View className="flex-row items-center">
+                        <Train size={14} color="#64748B" />
+                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          {reservationCounts.train}
+                        </Text>
+                      </View>
+                    )}
+                    {reservationCounts.event > 0 && (
+                      <View className="flex-row items-center">
+                        <Ticket size={14} color="#64748B" />
+                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          {reservationCounts.event}
+                        </Text>
+                      </View>
+                    )}
+                    {reservationCounts.meeting > 0 && (
+                      <View className="flex-row items-center">
+                        <Users size={14} color="#64748B" />
+                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          {reservationCounts.meeting}
+                        </Text>
+                      </View>
+                    )}
                   </>
                 )}
                 <ChevronRight size={16} color="#64748B" />
@@ -727,9 +754,18 @@ export default function TripsScreen() {
   const hasGmailConnected = (connectedAccounts ?? []).some((a: any) => a.provider === 'gmail');
 
   // Refetch trips when screen gains focus (e.g. returning from add/edit)
+  // Use refetchQueries with cancelRefetch:false so it won't interfere with
+  // in-flight mutations (like delete). Only refetches if data is stale.
   useFocusEffect(
     React.useCallback(() => {
-      queryClient.invalidateQueries({ queryKey: ['trips'] });
+      // Small delay to let any pending mutation settle first
+      const timer = setTimeout(() => {
+        queryClient.refetchQueries({
+          queryKey: ['trips'],
+          type: 'active',
+        });
+      }, 300);
+      return () => clearTimeout(timer);
     }, [queryClient])
   );
 
@@ -807,28 +843,37 @@ export default function TripsScreen() {
   const handleRefresh = async () => {
     setRefreshing(true);
     
+    // Safety timeout: never let the spinner hang for more than 8 seconds
+    const safetyTimer = setTimeout(() => setRefreshing(false), 8000);
+    
     try {
       // Update trip statuses first
       if (user?.id) {
         await updateTripStatuses(user.id).catch(() => {});
       }
       
-      // Trigger Gmail sync on pull-to-refresh (respects 5-min rate limit)
+      // Trigger Gmail sync in the background (fire-and-forget)
+      // Don't await — this can take 60-90+ seconds and would freeze the spinner
       if (connectedAccounts && connectedAccounts.length > 0) {
         const gmailAccount = connectedAccounts.find(a => a.provider === 'gmail');
         if (gmailAccount && !syncGmail.isPending) {
-          try {
-            await syncGmail.mutateAsync({ accountId: gmailAccount.id });
-          } catch (err: any) {
-            // Silently handle rate limit errors — just means we synced recently
-            if (!err.message?.includes('wait')) {
-              console.warn('Pull-to-refresh sync failed:', err.message);
-            }
-          }
+          syncGmail.mutate({ accountId: gmailAccount.id }, {
+            onSuccess: (data: any) => {
+              if (data?.summary?.tripsCreated > 0 || data?.summary?.reservationsCreated > 0) {
+                console.log('Pull-to-refresh sync found new trips:', data.summary);
+                refetch(); // Refresh trip list with new data
+              }
+            },
+            onError: (err: any) => {
+              if (!err.message?.includes('wait')) {
+                console.warn('Pull-to-refresh sync failed:', err.message);
+              }
+            },
+          });
         }
       }
       
-      // Then refetch to get updated data
+      // Refetch local data (fast — ~200ms)
       const result = await refetch();
       
       // If refetch failed with a network error, show the offline toast
@@ -842,6 +887,7 @@ export default function TripsScreen() {
       }
     }
     
+    clearTimeout(safetyTimer);
     setRefreshing(false);
   };
 

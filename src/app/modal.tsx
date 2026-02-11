@@ -3,7 +3,7 @@ import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, Scrol
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { X, Sparkles, Send, Plane, Building2, MapPin, Trash2 } from 'lucide-react-native';
+import { X, Sparkles, Send, Plane, Building2, MapPin, Trash2, MessageCircle } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp, FadeInRight } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useChat } from '@/lib/hooks/useChat';
@@ -21,6 +21,9 @@ const SUGGESTIONS = [
 
 function MessageBubble({ message, index }: { message: any; index: number }) {
   const isUser = message.role === 'user';
+
+  // Don't render empty assistant messages (streaming placeholder)
+  if (!isUser && !message.content) return null;
 
   return (
     <Animated.View
@@ -55,7 +58,7 @@ export default function ConciergeModal() {
   const scrollViewRef = React.useRef<ScrollView>(null);
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
   
-  const { messages, isLoading, error, sendMessageStreaming, clearMessages } = useChat();
+  const { messages, isLoading, error, suggestions, sendMessageStreaming, clearMessages } = useChat();
   const { canUseAI } = useSubscription();
 
   const handleClose = () => {
@@ -128,6 +131,7 @@ export default function ConciergeModal() {
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           className="flex-1"
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
         >
           {/* Header */}
           <View className="flex-row items-center justify-between px-5 py-4">
@@ -201,12 +205,17 @@ export default function ConciergeModal() {
                   <MessageBubble key={message.id} message={message} index={index} />
                 ))}
                 
-                {isLoading && messages[messages.length - 1]?.role === 'user' && (
-                  <View className="items-start mb-3">
-                    <View className="bg-slate-800/80 border border-slate-700/50 rounded-2xl px-4 py-3">
-                      <ActivityIndicator size="small" color="#A855F7" />
+                {isLoading && (messages[messages.length - 1]?.role === 'user' || (messages[messages.length - 1]?.role === 'assistant' && !messages[messages.length - 1]?.content)) && (
+                  <Animated.View
+                    entering={FadeInRight.duration(300)}
+                    className="items-start mb-3"
+                  >
+                    <View className="bg-slate-800/80 border border-slate-700/50 rounded-2xl px-4 py-3 flex-row items-center">
+                      <Text style={{ fontSize: 20, letterSpacing: 2, color: '#A855F7' }}>
+                        •••
+                      </Text>
                     </View>
-                  </View>
+                  </Animated.View>
                 )}
 
                 {error && (
@@ -240,6 +249,35 @@ export default function ConciergeModal() {
                   </Text>
                 </View>
               </Pressable>
+            )}
+
+            {/* AI-generated follow-up suggestion pills */}
+            {suggestions.length > 0 && !isLoading && (
+              <Animated.View entering={FadeInUp.duration(300)} className="mb-2">
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 0, gap: 8 }}
+                >
+                  {suggestions.map((suggestion, index) => (
+                    <Pressable
+                      key={`suggestion-${index}`}
+                      onPress={() => handleSuggestion(suggestion)}
+                      disabled={isLoading}
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}
+                    >
+                      <MessageCircle size={13} color="#A855F7" />
+                      <Text
+                        className="text-purple-300 ml-1.5"
+                        style={{ fontFamily: 'DMSans_500Medium', fontSize: 13 }}
+                        numberOfLines={1}
+                      >
+                        {suggestion}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </Animated.View>
             )}
             
             <View className="bg-slate-800/80 rounded-2xl flex-row items-center border border-slate-700/50 px-4">

@@ -41,7 +41,11 @@ export default function AddReceiptScreen() {
   const { data: trips = [], isLoading } = useTrips();
   const createReceipt = useCreateReceipt();
   
-  const activeTrips = trips.filter((t: Trip) => t.status === 'active' || t.status === 'upcoming');
+  // Show all trips (active/upcoming first, then past) so users can add receipts after a trip
+  const activeTrips = [...trips].sort((a, b) => {
+    const order: Record<string, number> = { active: 0, upcoming: 1, completed: 2 };
+    return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+  });
 
   const [merchant, setMerchant] = React.useState('');
   const [amount, setAmount] = React.useState('');

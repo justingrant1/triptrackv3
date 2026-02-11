@@ -105,7 +105,6 @@ function SummaryCard({ title, amount, subtitle, color, icon }: {
 function ReceiptItem({ receipt, trip, index }: { receipt: Receipt; trip: Trip; index: number }) {
   const router = useRouter();
   const deleteReceipt = useDeleteReceipt();
-  const [expanded, setExpanded] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const translateX = useSharedValue(0);
   const categoryColor = getCategoryColor(receipt.category);
@@ -124,14 +123,14 @@ function ReceiptItem({ receipt, trip, index }: { receipt: Receipt; trip: Trip; i
       translateX.value = withSpring(0);
       return;
     }
+    // Tap navigates to edit receipt
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setExpanded(!expanded);
+    router.push(`/edit-receipt?id=${receipt.id}`);
   };
 
   const handleEdit = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     translateX.value = withSpring(0);
-    setExpanded(false);
     router.push(`/edit-receipt?id=${receipt.id}`);
   };
 
@@ -277,6 +276,7 @@ export default function ReceiptsScreen() {
   
   const [refreshing, setRefreshing] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = React.useState<Receipt['category'] | 'all'>('all');
   const [showSearch, setShowSearch] = React.useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
   const [upgradeReason, setUpgradeReason] = React.useState<'csv-export' | 'email-receipts'>('csv-export');
@@ -291,29 +291,46 @@ export default function ReceiptsScreen() {
   const queryClient = useQueryClient();
 
   // Refetch receipts when screen gains focus (e.g. returning from add/edit)
+  // Use refetchQueries with a small delay to avoid racing with in-flight mutations
   useFocusEffect(
     React.useCallback(() => {
-      queryClient.invalidateQueries({ queryKey: ['receipts'] });
+      const timer = setTimeout(() => {
+        queryClient.refetchQueries({
+          queryKey: ['receipts'],
+          type: 'active',
+        });
+      }, 300);
+      return () => clearTimeout(timer);
     }, [queryClient])
   );
 
   // Find Gmail account
   const gmailAccount = connectedAccounts.find((a: any) => a.provider === 'gmail' || a.provider === 'google');
 
-  // Filter receipts based on search query
+  // Filter receipts based on search query and category filter
   const filteredReceipts = React.useMemo(() => {
-    if (!searchQuery.trim()) return allReceipts;
-    
-    const query = searchQuery.toLowerCase();
-    return allReceipts.filter(receipt => {
-      const trip = trips.find((t: Trip) => t.id === receipt.trip_id);
-      return (
-        receipt.merchant.toLowerCase().includes(query) ||
-        trip?.name.toLowerCase().includes(query) ||
-        trip?.destination.toLowerCase().includes(query)
-      );
-    });
-  }, [allReceipts, trips, searchQuery]);
+    let results = allReceipts;
+
+    // Apply category filter
+    if (selectedCategoryFilter !== 'all') {
+      results = results.filter((r: Receipt) => r.category === selectedCategoryFilter);
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      results = results.filter(receipt => {
+        const trip = trips.find((t: Trip) => t.id === receipt.trip_id);
+        return (
+          receipt.merchant.toLowerCase().includes(query) ||
+          trip?.name.toLowerCase().includes(query) ||
+          trip?.destination.toLowerCase().includes(query)
+        );
+      });
+    }
+
+    return results;
+  }, [allReceipts, trips, searchQuery, selectedCategoryFilter]);
 
   // Calculate totals from filtered receipts
   const totalExpenses = filteredReceipts.reduce((sum: number, r: Receipt) => sum + r.amount, 0);
@@ -572,6 +589,75 @@ export default function ReceiptsScreen() {
               icon={<CheckCircle size={18} color="#10B981" />}
             />
           </Animated.View>
+
+          {/* Category Filter Chips */}
+          {allReceipts.length > 0 && (
+            <Animated.View
+              entering={FadeInDown.duration(500).delay(150)}
+              className="mb-4"
+            >
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}
+              >
+                {([
+                  { id: 'all' as const, label: 'All', color: '#94A3B8' },
+                  { id: 'transport' as const, label: '✈️ Transport', color: '#3B82F6' },
+                  { id: 'lodging' as const, label: '🏨 Lodging', color: '#8B5CF6' },
+                  { id: 'meals' as const, label: '🍽️ Meals', color: '#F59E0B' },
+                  { id: 'other' as const, label: '📦 Other', color: '#64748B' },
+                ]).map((chip) => {
+                  const isActive = selectedCategoryFilter === chip.id;
+                  const count = chip.id === 'all'
+                    ? allReceipts.length
+                    : allReceipts.filter((r: Receipt) => r.category === chip.id).length;
+                  
+                  if (chip.id !== 'all' && count === 0) return null;
+
+                  return (
+                    <Pressable
+                      key={chip.id}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setSelectedCategoryFilter(chip.id);
+                      }}
+                      className={`flex-row items-center px-3.5 py-2 rounded-full border ${
+                        isActive
+                          ? 'border-transparent'
+                          : 'bg-slate-800/50 border-slate-700/50'
+                      }`}
+                      style={isActive ? { backgroundColor: chip.color + '25', borderColor: chip.color + '50' } : undefined}
+                    >
+                      <Text
+                        className="text-sm"
+                        style={{
+                          fontFamily: 'DMSans_500Medium',
+                          color: isActive ? chip.color : '#94A3B8',
+                        }}
+                      >
+                        {chip.label}
+                      </Text>
+                      <View
+                        className="ml-1.5 px-1.5 py-0.5 rounded-full"
+                        style={{ backgroundColor: isActive ? chip.color + '30' : '#334155' }}
+                      >
+                        <Text
+                          className="text-xs"
+                          style={{
+                            fontFamily: 'SpaceMono_400Regular',
+                            color: isActive ? chip.color : '#64748B',
+                          }}
+                        >
+                          {count}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </Animated.View>
+          )}
 
           {/* Quick Actions */}
           <Animated.View

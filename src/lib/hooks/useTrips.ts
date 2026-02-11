@@ -205,20 +205,32 @@ export function useDeleteTrip() {
       return tripId;
     },
     onMutate: async (tripId) => {
+      // Cancel all trip-related queries to prevent stale refetches from overwriting
       await queryClient.cancelQueries({ queryKey: queryKeys.trips.all });
+      await queryClient.cancelQueries({ queryKey: queryKeys.trips.upcoming });
+      await queryClient.cancelQueries({ queryKey: queryKeys.trips.detail(tripId) });
 
-      const previous = queryClient.getQueryData<Trip[]>(queryKeys.trips.all);
+      const previousAll = queryClient.getQueryData<Trip[]>(queryKeys.trips.all);
+      const previousUpcoming = queryClient.getQueryData<Trip[]>(queryKeys.trips.upcoming);
 
-      // Optimistically remove the trip
+      // Optimistically remove the trip from all lists
       queryClient.setQueryData<Trip[]>(queryKeys.trips.all, (old) =>
         (old ?? []).filter((trip) => trip.id !== tripId)
       );
+      queryClient.setQueryData<Trip[]>(queryKeys.trips.upcoming, (old) =>
+        (old ?? []).filter((trip) => trip.id !== tripId)
+      );
+      // Remove the detail cache so navigating back doesn't show stale data
+      queryClient.removeQueries({ queryKey: queryKeys.trips.detail(tripId) });
 
-      return { previous };
+      return { previousAll, previousUpcoming, tripId };
     },
     onError: (_err, _tripId, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(queryKeys.trips.all, context.previous);
+      if (context?.previousAll) {
+        queryClient.setQueryData(queryKeys.trips.all, context.previousAll);
+      }
+      if (context?.previousUpcoming) {
+        queryClient.setQueryData(queryKeys.trips.upcoming, context.previousUpcoming);
       }
     },
     onSuccess: (tripId) => {

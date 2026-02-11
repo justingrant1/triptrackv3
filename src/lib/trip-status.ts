@@ -2,6 +2,25 @@ import { supabase } from './supabase';
 import type { Trip } from './types/database';
 
 /**
+ * Check if all reservations in a trip are cancelled.
+ * Returns true if the trip has reservations and every one is cancelled.
+ */
+async function areAllReservationsCancelled(tripId: string): Promise<boolean> {
+  try {
+    const { data: reservations, error } = await supabase
+      .from('reservations')
+      .select('id, status')
+      .eq('trip_id', tripId);
+
+    if (error || !reservations || reservations.length === 0) return false;
+
+    return reservations.every((r) => r.status === 'cancelled');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Determine the correct status for a trip based on its dates
  */
 export function calculateTripStatus(startDate: string, endDate: string): 'upcoming' | 'active' | 'completed' {
@@ -44,7 +63,16 @@ export async function updateTripStatuses(userId: string): Promise<{ updated: num
 
     // Update each trip if status has changed
     for (const trip of trips) {
-      const correctStatus = calculateTripStatus(trip.start_date, trip.end_date);
+      let correctStatus = calculateTripStatus(trip.start_date, trip.end_date);
+
+      // If trip is upcoming or active, check if all reservations are cancelled.
+      // If so, move it to completed (Past Trips) regardless of dates.
+      if (correctStatus !== 'completed') {
+        const allCancelled = await areAllReservationsCancelled(trip.id);
+        if (allCancelled) {
+          correctStatus = 'completed';
+        }
+      }
       
       if (trip.status !== correctStatus) {
         const { error: updateError } = await supabase

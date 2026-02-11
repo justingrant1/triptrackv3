@@ -168,28 +168,32 @@ export function useDeleteConnectedAccount() {
 
 /**
  * Trigger a Gmail sync for a connected account.
- * This calls the Supabase Edge Function to scan Gmail.
- * 
- * Supports auto-pagination: if the edge function returns has_more=true
- * (it hit the time budget before processing all emails), the client
- * automatically calls again to continue where it left off.
- * Max 4 rounds to prevent infinite loops.
- * 
- * The onProgress callback is called after each round with cumulative stats.
+ * Calls the Supabase Edge Function once with a 90-second client timeout.
+ *
+ * The edge function handles its own time budget (~115s) and returns
+ * has_more=true if it didn't finish — but we don't loop on the client.
+ * One round is enough: on subsequent syncs, already-processed emails
+ * are skipped instantly via batch dedup.
+ *
+ * Key reliability features:
+ * - 90s client-side timeout prevents hanging forever
+ * - last_sync is updated in onSettled (success OR error) so it always reflects the attempt
+ * - The sync store has a 2-minute safety auto-reset as a final backstop
  */
 export function useSyncGmail() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const { startSync, finishSync } = useSyncStore.getState();
 
   return useMutation({
-    mutationFn: async ({ accountId, onProgress }: { accountId: string; onProgress?: (stats: { emailsProcessed: number; tripsCreated: number; reservationsCreated: number; round: number; scanning: boolean }) => void }) => {
+    mutationFn: async ({ accountId }: { accountId: string }) => {
       if (!user?.id) throw new Error('User not authenticated');
 
-      // Mark sync as in-progress globally
+      const { startSync } = useSyncStore.getState();
+
+      // Mark sync as in-progress globally (starts progress phase animation)
       startSync(accountId);
 
-      // Rate limiting: Check last sync time (5 minutes minimum between syncs)
+      // Rate limiting: 2 minutes minimum between syncs
       const { data: account } = await supabase
         .from('connected_accounts')
         .select('last_sync')
@@ -200,84 +204,90 @@ export function useSyncGmail() {
       if (account?.last_sync) {
         const lastSyncTime = new Date(account.last_sync).getTime();
         const now = Date.now();
-        const fiveMinutes = 5 * 60 * 1000;
-        
-        if (now - lastSyncTime < fiveMinutes) {
-          const waitTime = Math.ceil((fiveMinutes - (now - lastSyncTime)) / 1000 / 60);
-          throw new Error(`Please wait ${waitTime} minute(s) before syncing again`);
+        const twoMinutes = 2 * 60 * 1000;
+
+        if (now - lastSyncTime < twoMinutes) {
+          const waitSecs = Math.ceil((twoMinutes - (now - lastSyncTime)) / 1000);
+          throw new Error(
+            waitSecs > 60
+              ? `Please wait ${Math.ceil(waitSecs / 60)} minute(s) before syncing again`
+              : `Please wait ${waitSecs} seconds before syncing again`
+          );
         }
       }
 
-      // Auto-pagination: loop until has_more is false or max rounds reached
-      const MAX_ROUNDS = 4;
-      let cumulativeStats = {
-        emailsProcessed: 0,
-        tripsCreated: 0,
-        reservationsCreated: 0,
-      };
-      let lastData: any = null;
+      // Single edge function call with a 90-second client timeout
+      console.log('[Gmail Sync] Starting single-round sync...');
 
-      for (let round = 1; round <= MAX_ROUNDS; round++) {
-        console.log(`[Gmail Sync] Round ${round}/${MAX_ROUNDS}...`);
-        
-        onProgress?.({
-          ...cumulativeStats,
-          round,
-          scanning: true,
-        });
+      const TIMEOUT_MS = 90_000;
 
-        const { data, error } = await supabase.functions.invoke('scan-gmail', {
-          body: { accountId },
-        });
+      const edgeFnPromise = supabase.functions.invoke('scan-gmail', {
+        body: { accountId },
+      });
 
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('__SYNC_TIMEOUT__')),
+          TIMEOUT_MS
+        );
+      });
+
+      let data: any;
+      let timedOut = false;
+
+      try {
+        const result = await Promise.race([edgeFnPromise, timeoutPromise]);
+        // result is { data, error } from supabase.functions.invoke
+        const { data: responseData, error } = result as any;
         if (error) throw error;
-        lastData = data;
-
-        // Accumulate stats from this round
-        const summary = data?.summary;
-        if (summary) {
-          cumulativeStats.emailsProcessed += summary.emailsProcessed || 0;
-          cumulativeStats.tripsCreated += summary.tripsCreated || 0;
-          cumulativeStats.reservationsCreated += summary.reservationsCreated || 0;
+        data = responseData;
+      } catch (err: any) {
+        if (err?.message === '__SYNC_TIMEOUT__') {
+          // The edge function is still running server-side — trips may still be created.
+          // We treat this as a soft success so the user isn't alarmed.
+          console.log('[Gmail Sync] Client timeout reached (90s) — edge function may still be running');
+          timedOut = true;
+          data = { success: true, timedOut: true, summary: { tripsCreated: 0, reservationsCreated: 0, emailsProcessed: 0 } };
+        } else {
+          throw err;
         }
-
-        onProgress?.({
-          ...cumulativeStats,
-          round,
-          scanning: false,
-        });
-
-        // If no more emails to process, we're done
-        if (!summary?.has_more) {
-          console.log(`[Gmail Sync] Complete after ${round} round(s)`);
-          break;
-        }
-
-        console.log(`[Gmail Sync] has_more=true, continuing to round ${round + 1}...`);
       }
 
-      // Update last_sync timestamp
-      await supabase
-        .from('connected_accounts')
-        .update({ last_sync: new Date().toISOString() })
-        .eq('id', accountId)
-        .eq('user_id', user.id);
+      console.log('[Gmail Sync] Complete', timedOut ? '(timed out on client)' : '');
 
-      // Return cumulative results
       return {
-        ...lastData,
-        cumulativeStats,
+        ...data,
+        timedOut,
+        cumulativeStats: {
+          emailsProcessed: data?.summary?.emailsProcessed || 0,
+          tripsCreated: data?.summary?.tripsCreated || 0,
+          reservationsCreated: data?.summary?.reservationsCreated || 0,
+        },
       };
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['connected-accounts', user?.id] });
-      queryClient.invalidateQueries({ queryKey: ['connected-account', variables.accountId] });
-      // Also invalidate trips since new ones may have been created
-      queryClient.invalidateQueries({ queryKey: ['trips', user?.id] });
-    },
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
+      const { finishSync } = useSyncStore.getState();
+
       // Always clear global sync state (success or error)
       finishSync();
+
+      // Always update last_sync so the UI shows a timestamp and rate limiter works.
+      // Even on error, a sync was attempted.
+      if (user?.id && variables?.accountId) {
+        supabase
+          .from('connected_accounts')
+          .update({ last_sync: new Date().toISOString() })
+          .eq('id', variables.accountId)
+          .eq('user_id', user.id)
+          .then(() => {
+            // Refresh the accounts list so "Last sync: Just now" appears
+            queryClient.invalidateQueries({ queryKey: ['connected-accounts', user?.id] });
+          });
+      }
+
+      // Invalidate trips since new ones may have been created
+      queryClient.invalidateQueries({ queryKey: ['connected-accounts', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['trips', user?.id] });
     },
   });
 }

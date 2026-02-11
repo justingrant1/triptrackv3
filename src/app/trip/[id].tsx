@@ -577,7 +577,8 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
   const statusColor = getStatusColor(reservation.status);
   
   // For flights with API data, use the real flight status instead of time-based guess
-  const flightStatusData = reservation.type === 'flight' ? (reservation.details?._flight_status as FlightStatusData | undefined) ?? null : null;
+  // Use getStoredFlightStatus() which validates the data matches this reservation's date
+  const flightStatusData = reservation.type === 'flight' ? getStoredFlightStatus(reservation) : null;
   const liveStatus: LiveStatus | null = flightStatusData
     ? getFlightLiveStatus(flightStatusData)
     : getLiveStatus(reservation.type, new Date(reservation.start_time), reservation.end_time ? new Date(reservation.end_time) : undefined, reservation.status);
@@ -745,27 +746,62 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
                 <View className="flex-row items-center mt-2">
                   <Clock size={12} color="#64748B" />
                   <Text className="text-slate-500 text-xs ml-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-                    {formatTime(new Date(reservation.start_time))}
-                    {reservation.end_time && ` - ${formatTime(new Date(reservation.end_time))}`}
+                    {reservation.type === 'flight' || reservation.type === 'train'
+                      ? (() => {
+                          const depTime = formatTime(new Date(reservation.start_time));
+                          if (reservation.end_time) {
+                            const diffMs = new Date(reservation.end_time).getTime() - new Date(reservation.start_time).getTime();
+                            const totalMins = Math.round(diffMs / 60000);
+                            if (totalMins > 0) {
+                              const hrs = Math.floor(totalMins / 60);
+                              const mins = totalMins % 60;
+                              const duration = hrs > 0
+                                ? (mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`)
+                                : `${mins}m`;
+                              return `${depTime} · ${duration}`;
+                            }
+                          }
+                          return depTime;
+                        })()
+                      : (() => {
+                          // Hotels, cars, etc. — show time range
+                          const startTime = formatTime(new Date(reservation.start_time));
+                          if (reservation.end_time) {
+                            return `${startTime} - ${formatTime(new Date(reservation.end_time))}`;
+                          }
+                          return startTime;
+                        })()
+                    }
                   </Text>
                 </View>
               </View>
             </View>
 
             {/* Cancellation Banner */}
-            {isCancelled && (
-              <View className="mt-3 bg-red-500/15 rounded-xl p-3 flex-row items-center border border-red-500/20">
-                <AlertCircle size={16} color="#EF4444" />
-                <View className="ml-2 flex-1">
-                  <Text className="text-red-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    Flight Cancelled
-                  </Text>
-                  <Text className="text-red-400/70 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                    Contact your airline for rebooking options
-                  </Text>
+            {isCancelled && (() => {
+              const cancelInfo: Record<string, { title: string; subtitle: string }> = {
+                flight: { title: 'Flight Cancelled', subtitle: 'Contact your airline for rebooking options' },
+                hotel: { title: 'Booking Cancelled', subtitle: 'Contact the hotel for alternatives' },
+                car: { title: 'Rental Cancelled', subtitle: 'Contact the rental company for options' },
+                train: { title: 'Train Cancelled', subtitle: 'Contact the operator for rebooking options' },
+                event: { title: 'Event Cancelled', subtitle: 'Contact the organizer for details' },
+                meeting: { title: 'Meeting Cancelled', subtitle: 'Check with the organizer for updates' },
+              };
+              const info = cancelInfo[reservation.type] ?? { title: 'Cancelled', subtitle: 'Contact the provider for options' };
+              return (
+                <View className="mt-3 bg-red-500/15 rounded-xl p-3 flex-row items-center border border-red-500/20">
+                  <AlertCircle size={16} color="#EF4444" />
+                  <View className="ml-2 flex-1">
+                    <Text className="text-red-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                      {info.title}
+                    </Text>
+                    <Text className="text-red-400/70 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      {info.subtitle}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            )}
+              );
+            })()}
 
             {/* Alert */}
             {reservation.alert_message && !isCancelled && (

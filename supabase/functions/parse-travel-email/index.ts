@@ -22,12 +22,15 @@ interface ParsedReservation {
   location?: string;
   address?: string;
   confirmation_number?: string;
+  status?: 'confirmed' | 'cancelled';
   details?: Record<string, any>;
 }
 
 interface ParsedTrip {
   trip_name: string;
   destination: string;
+  country?: string;
+  region?: string;
   start_date: string;
   end_date: string;
   reservations: ParsedReservation[];
@@ -40,6 +43,8 @@ Return ONLY valid JSON in this exact format:
 {
   "trip_name": "Brief trip name (e.g., 'New York Business Trip', 'Austin Vacation')",
   "destination": "City, State/Country",
+  "country": "Full country name (e.g., 'Indonesia', 'United States', 'Japan')",
+  "region": "State, province, island, or sub-region (e.g., 'Bali', 'California', 'Hokkaido'). Use null if not applicable.",
   "start_date": "YYYY-MM-DD (earliest date)",
   "end_date": "YYYY-MM-DD (latest date)",
   "reservations": [
@@ -52,6 +57,7 @@ Return ONLY valid JSON in this exact format:
       "location": "Airport code or city",
       "address": "Full address if available",
       "confirmation_number": "Confirmation/booking number",
+      "status": "confirmed" or "cancelled" (use "cancelled" ONLY if the email is explicitly a cancellation notice),
       "details": {
         "Seat": "seat number (flights)",
         "Gate": "gate number (flights)",
@@ -118,6 +124,160 @@ ${emailText}`;
   }
 
   return parsed;
+}
+
+/**
+ * Check if two destinations are in the same geographic region.
+ * Uses heuristic string matching on destination, country, and region fields.
+ */
+function areDestinationsRelated(
+  newDestination: string,
+  newCountry: string | undefined,
+  newRegion: string | undefined,
+  existingDestination: string,
+  existingName: string
+): boolean {
+  const normalize = (s: string) => s.toLowerCase().trim();
+  const newDest = normalize(newDestination);
+  const existDest = normalize(existingDestination);
+  const existName = normalize(existingName);
+
+  // Exact match
+  if (newDest === existDest) return true;
+
+  // One destination contains the other (e.g., "Denpasar" vs "Denpasar, Bali")
+  if (newDest.includes(existDest) || existDest.includes(newDest)) return true;
+
+  // Check if the trip name contains the new destination or vice versa
+  if (existName.includes(newDest) || newDest.includes(existName.replace('trip to ', ''))) return true;
+
+  // Extract words from both destinations for overlap checking
+  const newWords = new Set(newDest.split(/[\s,]+/).filter(w => w.length > 2));
+  const existWords = new Set(existDest.split(/[\s,]+/).filter(w => w.length > 2));
+
+  // Check for shared significant words (e.g., "Denpasar, Bali" and "Ubud, Bali" both contain "Bali")
+  for (const word of newWords) {
+    if (existWords.has(word)) return true;
+  }
+
+  // Check if region matches any word in existing destination or trip name
+  if (newRegion) {
+    const region = normalize(newRegion);
+    if (existDest.includes(region) || existName.includes(region)) return true;
+    for (const word of existWords) {
+      if (region.includes(word) || word.includes(region)) return true;
+    }
+  }
+
+  // Check if country matches
+  if (newCountry) {
+    const country = normalize(newCountry);
+    if (existDest.includes(country) || existName.includes(country)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Find an existing trip that matches the destination and overlapping dates,
+ * or create a new one. Uses tiered matching:
+ * 
+ * Tier 1: Exact destination + overlapping dates
+ * Tier 2: Fuzzy destination (same region/country) + overlapping/adjacent dates (±3 day buffer)
+ */
+async function findOrCreateTripForEmail(
+  supabase: any,
+  userId: string,
+  parsed: ParsedTrip
+): Promise<string | null> {
+  const { destination, country, region, start_date, end_date } = parsed;
+
+  // === Tier 1: Exact destination match + overlapping dates ===
+  const { data: exactMatches } = await supabase
+    .from('trips')
+    .select('id, start_date, end_date, name, destination')
+    .eq('user_id', userId)
+    .eq('destination', destination)
+    .gte('end_date', start_date)
+    .lte('start_date', end_date);
+
+  if (exactMatches && exactMatches.length > 0) {
+    const trip = exactMatches[0];
+    console.log(`[Tier 1] Exact destination match — using trip: ${trip.id} (${trip.name})`);
+    await expandTripDates(supabase, trip, start_date, end_date);
+    return trip.id;
+  }
+
+  // === Tier 2: Fuzzy destination + overlapping/adjacent dates (±3 day buffer) ===
+  const bufferDays = 3;
+  const bufferedStart = new Date(start_date);
+  bufferedStart.setDate(bufferedStart.getDate() - bufferDays);
+  const bufferedEnd = new Date(end_date);
+  bufferedEnd.setDate(bufferedEnd.getDate() + bufferDays);
+  const bufferedStartStr = bufferedStart.toISOString().split('T')[0];
+  const bufferedEndStr = bufferedEnd.toISOString().split('T')[0];
+
+  const { data: nearbyTrips } = await supabase
+    .from('trips')
+    .select('id, start_date, end_date, name, destination')
+    .eq('user_id', userId)
+    .gte('end_date', bufferedStartStr)
+    .lte('start_date', bufferedEndStr);
+
+  if (nearbyTrips && nearbyTrips.length > 0) {
+    for (const trip of nearbyTrips) {
+      if (areDestinationsRelated(destination, country, region, trip.destination, trip.name)) {
+        console.log(`[Tier 2] Fuzzy destination match — "${destination}" ≈ "${trip.destination}" (trip: ${trip.name}) — using trip: ${trip.id}`);
+        await expandTripDates(supabase, trip, start_date, end_date);
+        return trip.id;
+      }
+    }
+  }
+
+  // === No match found — create new trip ===
+  const { data: newTrip, error: tripError } = await supabase
+    .from('trips')
+    .insert({
+      user_id: userId,
+      name: parsed.trip_name,
+      destination,
+      start_date,
+      end_date,
+      cover_image: null,
+      status: 'upcoming',
+    })
+    .select()
+    .single();
+
+  if (tripError || !newTrip) {
+    console.error('Error creating trip:', tripError);
+    return null;
+  }
+
+  console.log(`Created new trip: ${newTrip.id} — ${destination}`);
+  return newTrip.id;
+}
+
+/**
+ * Expand trip dates if the new reservation extends beyond the existing range.
+ */
+async function expandTripDates(
+  supabase: any,
+  trip: { id: string; start_date: string; end_date: string },
+  newStart: string,
+  newEnd: string
+): Promise<void> {
+  const updates: Record<string, string> = {};
+  if (newStart < trip.start_date) {
+    updates.start_date = newStart;
+  }
+  if (newEnd > trip.end_date) {
+    updates.end_date = newEnd;
+  }
+  if (Object.keys(updates).length > 0) {
+    await supabase.from('trips').update(updates).eq('id', trip.id);
+    console.log(`Expanded trip dates:`, updates);
+  }
 }
 
 serve(async (req) => {
@@ -222,52 +382,91 @@ serve(async (req) => {
     const parsed = await parseEmailWithAI(emailText);
     console.log('Parsed trip:', parsed.trip_name);
 
-    // 3. Create trip
-    const { data: trip, error: tripError } = await supabase
-      .from('trips')
-      .insert({
-        user_id: userId,
-        name: parsed.trip_name,
-        destination: parsed.destination,
-        start_date: parsed.start_date,
-        end_date: parsed.end_date,
-        cover_image: null,
-        status: 'upcoming',
-      })
-      .select()
-      .single();
+    // 3. Find existing trip or create new one (smart matching)
+    const tripId = await findOrCreateTripForEmail(supabase, userId, parsed);
 
-    if (tripError || !trip) {
-      throw new Error(`Failed to create trip: ${tripError?.message}`);
+    if (!tripId) {
+      throw new Error('Failed to find or create trip');
     }
 
-    console.log('Created trip:', trip.id);
+    console.log('Using trip:', tripId);
 
-    // 4. Create all reservations
-    const reservations = parsed.reservations.map(res => ({
-      trip_id: trip.id,
-      type: res.type,
-      title: res.title,
-      subtitle: res.subtitle || null,
-      start_time: res.start_time,
-      end_time: res.end_time || null,
-      location: res.location || null,
-      address: res.address || null,
-      confirmation_number: res.confirmation_number || null,
-      details: res.details || {},
-      status: 'confirmed',
-      alert_message: null,
-    }));
+    // 4. Create all reservations (handle cancellations by updating existing)
+    const reservationsToInsert: any[] = [];
+    let cancellationsUpdated = 0;
 
-    const { error: reservationsError } = await supabase
-      .from('reservations')
-      .insert(reservations);
+    for (const res of parsed.reservations) {
+      const reservationStatus = res.status === 'cancelled' ? 'cancelled' : 'confirmed';
 
-    if (reservationsError) {
-      throw new Error(`Failed to create reservations: ${reservationsError.message}`);
+      // If cancellation email, try to update existing reservation
+      if (reservationStatus === 'cancelled' && res.confirmation_number) {
+        const { data: existingRes } = await supabase
+          .from('reservations')
+          .select('id')
+          .eq('trip_id', tripId)
+          .eq('confirmation_number', res.confirmation_number)
+          .maybeSingle();
+
+        if (existingRes) {
+          await supabase
+            .from('reservations')
+            .update({ status: 'cancelled' })
+            .eq('id', existingRes.id);
+          console.log(`Updated existing reservation to cancelled: ${res.title} (${existingRes.id})`);
+          cancellationsUpdated++;
+          continue;
+        }
+      }
+
+      reservationsToInsert.push({
+        trip_id: tripId,
+        type: res.type,
+        title: res.title,
+        subtitle: res.subtitle || null,
+        start_time: res.start_time,
+        end_time: res.end_time || null,
+        location: res.location || null,
+        address: res.address || null,
+        confirmation_number: res.confirmation_number || null,
+        details: res.details || {},
+        status: reservationStatus,
+        alert_message: null,
+      });
     }
 
-    console.log(`Created ${reservations.length} reservations`);
+    if (reservationsToInsert.length > 0) {
+      const { error: reservationsError } = await supabase
+        .from('reservations')
+        .insert(reservationsToInsert);
+
+      if (reservationsError) {
+        throw new Error(`Failed to create reservations: ${reservationsError.message}`);
+      }
+    }
+
+    const totalProcessed = reservationsToInsert.length + cancellationsUpdated;
+
+    console.log(`Processed ${totalProcessed} reservations (${reservationsToInsert.length} created, ${cancellationsUpdated} cancellations updated)`);
+
+    // 4b. If cancellations were processed, check if ALL reservations in the trip are now cancelled.
+    //     If so, mark the trip as 'completed' so it moves to Past Trips.
+    if (cancellationsUpdated > 0) {
+      const { data: allReservations } = await supabase
+        .from('reservations')
+        .select('id, status')
+        .eq('trip_id', tripId);
+
+      if (allReservations && allReservations.length > 0) {
+        const allCancelled = allReservations.every((r: any) => r.status === 'cancelled');
+        if (allCancelled) {
+          await supabase
+            .from('trips')
+            .update({ status: 'completed', updated_at: new Date().toISOString() })
+            .eq('id', tripId);
+          console.log(`All reservations cancelled — marked trip ${tripId} as completed`);
+        }
+      }
+    }
 
     // 5. Send push notification (if user has push token)
     const { data: userProfile } = await supabase
@@ -286,8 +485,8 @@ serve(async (req) => {
         body: JSON.stringify({
           to: userProfile.push_token,
           title: '✈️ New Trip Added!',
-          body: `${parsed.trip_name} has been added with ${reservations.length} reservation(s).`,
-          data: { tripId: trip.id },
+          body: `${parsed.trip_name} has been added with ${totalProcessed} reservation(s).`,
+          data: { tripId },
         }),
       });
     }
@@ -296,9 +495,9 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        trip_id: trip.id,
+        trip_id: tripId,
         trip_name: parsed.trip_name,
-        reservations_count: reservations.length,
+        reservations_count: totalProcessed,
       }),
       {
         status: 200,
