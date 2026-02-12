@@ -332,18 +332,26 @@ export function safeParseDate(dateStr: string | null | undefined): Date {
 type ReservationType = Reservation['type'];
 
 /**
- * Parse a YYYY-MM-DD date string as LOCAL noon, not UTC midnight.
+ * Parse a date-only value as LOCAL noon, not UTC midnight.
  * Prevents the off-by-one-day display bug in Western Hemisphere timezones.
  * 
  * JavaScript's `new Date("2026-02-12")` creates midnight UTC, which in EST
  * becomes 7 PM on Feb 11 — showing the wrong date. Using noon local time
  * ensures no timezone on Earth (+14 to -12) can shift it to a different day.
+ * 
+ * Handles multiple formats from Supabase:
+ * - Pure date: "2026-02-12"
+ * - Timestamptz: "2026-02-12T00:00:00+00:00" or "2026-02-12 00:00:00+00"
+ * - With microseconds: "2026-02-12T00:00:00.000000+00:00"
  */
 export function parseDateOnly(dateStr: string | null | undefined): Date {
   if (!dateStr) return new Date();
-  // Only apply the noon trick to pure date strings (YYYY-MM-DD)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return new Date(dateStr + 'T12:00:00');
+  // Extract just the YYYY-MM-DD portion from any string that starts with a date.
+  // This function is ONLY used for date-only fields (trip.start_date, trip.end_date),
+  // so it's always safe to discard the time/timezone portion.
+  const dateMatch = dateStr.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateMatch) {
+    return new Date(dateMatch[1] + 'T12:00:00');
   }
   return new Date(dateStr);
 }

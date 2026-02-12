@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { parseDateOnly } from './utils';
 import type { Trip } from './types/database';
 
 /**
@@ -25,8 +26,10 @@ async function areAllReservationsCancelled(tripId: string): Promise<boolean> {
  */
 export function calculateTripStatus(startDate: string, endDate: string): 'upcoming' | 'active' | 'completed' {
   const now = new Date();
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  // Use parseDateOnly to correctly handle Supabase timestamptz date strings
+  // (e.g., "2026-02-12T00:00:00+00:00") without timezone shift
+  const start = parseDateOnly(startDate);
+  const end = parseDateOnly(endDate);
 
   // Set time to start of day for accurate comparison
   now.setHours(0, 0, 0, 0);
