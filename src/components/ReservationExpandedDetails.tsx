@@ -1,12 +1,14 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { Plane, Train, MapPin, Copy } from 'lucide-react-native';
+import { Plane, Train, MapPin, Copy, QrCode } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatTimeFromISO, formatDate } from '@/lib/utils';
+import { formatTime, formatTimeFromISO, formatDate, getFlightDuration } from '@/lib/utils';
 import { FlightStatusBar } from '@/components/FlightStatusBar';
 import { getStoredFlightStatus } from '@/lib/flight-status';
+import { getBoardingPassFromReservation } from '@/lib/boarding-pass';
 
 // Helper: Detail row component
 export function DetailRow({ label, value, mono = false }: { label: string; value: string | null | undefined; mono?: boolean }) {
@@ -45,7 +47,9 @@ interface Props {
  * Shared between the trip detail page and the Today tab.
  */
 export function ReservationExpandedDetails({ reservation, showFlightStatus = true, compact = false }: Props) {
+  const router = useRouter();
   const d = reservation.details || {};
+  const existingBoardingPass = getBoardingPassFromReservation(d);
 
   const handleCopyConfirmation = async () => {
     if (reservation.confirmation_number) {
@@ -64,17 +68,8 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
     const depTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
     const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
 
-    // Calculate flight duration
-    let flightDuration: string | null = d['Duration'] || d['Journey Time'] || null;
-    if (!flightDuration && reservation.start_time && reservation.end_time) {
-      const diffMs = new Date(reservation.end_time).getTime() - new Date(reservation.start_time).getTime();
-      const diffMins = Math.round(diffMs / 60000);
-      if (diffMins > 0 && diffMins < 1440) { // sanity check: less than 24h
-        const hours = Math.floor(diffMins / 60);
-        const mins = diffMins % 60;
-        flightDuration = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-      }
-    }
+    // Use timezone-aware duration calculation (handles cross-timezone flights correctly)
+    const flightDuration: string | null = getFlightDuration(reservation);
 
     // Clean airport names (remove code if we extracted it)
     const depName = depAirport?.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-–]\s*/, '') || null;
@@ -181,14 +176,46 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
         {d['Baggage'] && <DetailRow label={/food|meal|snack|purchase/i.test(d['Baggage']) ? 'Meals' : 'Baggage'} value={d['Baggage']} />}
         {d['Duration'] && <DetailRow label="Duration" value={d['Duration']} />}
         {d['Aircraft'] && <DetailRow label="Aircraft" value={d['Aircraft']} />}
+
+        {/* Boarding Pass Button */}
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            router.push(`/boarding-pass?reservationId=${reservation.id}`);
+          }}
+          style={{
+            marginTop: 12,
+            backgroundColor: existingBoardingPass ? 'rgba(59,130,246,0.15)' : 'rgba(139,92,246,0.12)',
+            borderWidth: 1,
+            borderColor: existingBoardingPass ? 'rgba(59,130,246,0.3)' : 'rgba(139,92,246,0.25)',
+            borderRadius: 14,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <QrCode size={18} color={existingBoardingPass ? '#3B82F6' : '#8B5CF6'} />
+          <Text
+            style={{
+              color: existingBoardingPass ? '#3B82F6' : '#8B5CF6',
+              fontSize: 14,
+              fontFamily: 'DMSans_700Bold',
+              marginLeft: 8,
+            }}
+          >
+            {existingBoardingPass ? 'View Boarding Pass' : 'Add Boarding Pass'}
+          </Text>
+        </Pressable>
       </View>
     );
   }
 
   // 🏨 HOTEL layout
   if (reservation.type === 'hotel') {
-    const checkIn = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
-    const checkOut = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    const checkIn = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
+    const checkOut = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
     const checkInDate = reservation.start_time ? formatDate(new Date(reservation.start_time)) : null;
     const checkOutDate = reservation.end_time ? formatDate(new Date(reservation.end_time)) : null;
 
@@ -280,9 +307,9 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
 
   // 🚗 CAR RENTAL layout
   if (reservation.type === 'car') {
-    const pickupTime = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
+    const pickupTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
     const pickupDate = reservation.start_time ? formatDate(new Date(reservation.start_time)) : null;
-    const dropoffTime = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    const dropoffTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
     const dropoffDate = reservation.end_time ? formatDate(new Date(reservation.end_time)) : null;
 
     return (
@@ -352,8 +379,8 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
   if (reservation.type === 'train') {
     const depStation = d['Departure Station'] || d['From'] || null;
     const arrStation = d['Arrival Station'] || d['To'] || null;
-    const depTime = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
-    const arrTime = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    const depTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
+    const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
 
     return (
       <View className={compact ? 'py-2' : 'px-4 py-3'}>

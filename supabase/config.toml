@@ -1,5 +1,11 @@
 project_id = "jucngvlcnxjyvjxydmco"
 
+[functions.check-flight-status]
+verify_jwt = false
+
+[functions.flight-status-cron]
+verify_jwt = false
+
 [functions.parse-travel-email]
 verify_jwt = false
 

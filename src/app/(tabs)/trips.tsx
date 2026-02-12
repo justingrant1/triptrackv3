@@ -51,7 +51,7 @@ import { useForwardingAddress } from '@/lib/hooks/useProfile';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import * as Clipboard from 'expo-clipboard';
 import type { Trip } from '@/lib/types/database';
-import { formatDateRange, getDaysUntil } from '@/lib/utils';
+import { formatDateRange, getDaysUntil, parseDateOnly } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { updateTripStatuses } from '@/lib/trip-status';
@@ -323,7 +323,7 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
   // Compose: pan takes priority over tap — both in same gesture system
   const composedGesture = Gesture.Race(panGesture, tapGesture);
 
-  const daysUntil = getDaysUntil(new Date(trip.start_date));
+  const daysUntil = getDaysUntil(parseDateOnly(trip.start_date));
   const isActive = trip.status === 'active';
   const isUpcoming = trip.status === 'upcoming';
   const { data: weather } = useWeather(trip.destination);
@@ -440,7 +440,7 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
               <View className="flex-row items-center">
                 <Calendar size={14} color="#64748B" />
                 <Text className="text-slate-400 text-sm ml-1.5" style={{ fontFamily: 'DMSans_500Medium' }}>
-                  {formatDateRange(new Date(trip.start_date), new Date(trip.end_date))}
+                  {formatDateRange(parseDateOnly(trip.start_date), parseDateOnly(trip.end_date))}
                 </Text>
               </View>
               <View className="flex-row items-center gap-3">
@@ -722,7 +722,7 @@ function CompactTripCard({ trip, index }: { trip: Trip; index: number }) {
                 {trip.destination}
               </Text>
               <Text className="text-slate-500 text-xs mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-                {formatDateRange(new Date(trip.start_date), new Date(trip.end_date))}
+                {formatDateRange(parseDateOnly(trip.start_date), parseDateOnly(trip.end_date))}
               </Text>
             </View>
             <ChevronRight size={18} color="#64748B" />
@@ -826,13 +826,13 @@ export default function TripsScreen() {
 
   // Featured trips: active first, then upcoming — sorted soonest first (ascending)
   const featuredTrips = [...activeTrips, ...upcomingTrips].sort(
-    (a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
+    (a, b) => parseDateOnly(a.start_date).getTime() - parseDateOnly(b.start_date).getTime()
   );
 
   // Past trips: most recent first (descending) — already in correct order from useTrips()
   // but explicitly sort to be safe after filtering
   const sortedPastTrips = pastTrips.sort(
-    (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
+    (a, b) => parseDateOnly(b.start_date).getTime() - parseDateOnly(a.start_date).getTime()
   );
 
   const handleAddTrip = () => {

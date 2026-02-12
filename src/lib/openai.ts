@@ -218,12 +218,23 @@ Return ONLY valid JSON in this exact format:
       "type": "flight" | "hotel" | "car" | "train" | "meeting" | "event",
       "title": "Main title (e.g., 'AA 182 to JFK', 'Marriott Downtown')",
       "subtitle": "Secondary info (e.g., 'American Airlines', 'Deluxe King Room')",
-      "start_time": "YYYY-MM-DDTHH:MM:SS (ISO 8601)",
-      "end_time": "YYYY-MM-DDTHH:MM:SS (optional, for hotels/events)",
+      "start_time": "YYYY-MM-DDTHH:MM:SS (ISO 8601, LOCAL time at the location — do NOT append Z or timezone offset)",
+      "end_time": "YYYY-MM-DDTHH:MM:SS (optional, LOCAL time — do NOT append Z or timezone offset)",
       "location": "Airport code or city",
       "address": "Full address if available",
       "confirmation_number": "Confirmation/booking number",
-      "details": {}
+      "details": {
+        "Duration": "flight duration as 'Xh Ym' (e.g. '11h 55m') — REQUIRED for flights, calculate from departure/arrival times and timezone difference",
+        "Departure Timezone": "UTC offset of departure location as '+HH:MM' or '-HH:MM' (e.g. '-08:00' for LAX) — REQUIRED for flights",
+        "Arrival Timezone": "UTC offset of arrival location as '+HH:MM' or '-HH:MM' (e.g. '+09:00' for NRT) — REQUIRED for flights",
+        "Departure Airport": "departure airport name or code",
+        "Arrival Airport": "arrival airport name or code",
+        "Airline": "airline name",
+        "Flight Number": "flight number",
+        "Seat": "seat number",
+        "Gate": "gate number",
+        "Terminal": "terminal"
+      }
     }
   ]
 }

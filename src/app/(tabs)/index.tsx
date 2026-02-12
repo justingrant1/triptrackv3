@@ -42,7 +42,7 @@ import * as Linking from 'expo-linking';
 import { useUpcomingTrips } from '@/lib/hooks/useTrips';
 import { useUpcomingReservations } from '@/lib/hooks/useReservations';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatDate, getCountdown, isToday, isTomorrow, getFlightAwareCountdown, getContextualTimeInfo } from '@/lib/utils';
+import { formatTime, formatDate, getCountdown, isToday, isTomorrow, getFlightAwareCountdown, getContextualTimeInfo, getFlightDepartureUTC } from '@/lib/utils';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
@@ -107,10 +107,15 @@ function isNextUpCandidate(reservation: Reservation): boolean {
         const arrEst = new Date(flightStatus.arr_estimated);
         if (arrEst.getTime() < now.getTime()) return false;
       }
+
+      // Live data says flight is still scheduled (possibly delayed) — it's actionable.
+      // Don't fall through to the time-based check which uses the original departure
+      // time and would incorrectly exclude delayed flights that haven't departed yet.
+      return true;
     }
 
-    // No live data — use scheduled departure time
-    const depTime = new Date(reservation.start_time);
+    // No live data — use scheduled departure time as fallback
+    const depTime = getFlightDepartureUTC(reservation);
     const minsSinceDeparture = (now.getTime() - depTime.getTime()) / 60000;
     // If departure was >30 min ago and we have no live data, assume departed
     if (minsSinceDeparture > 30) return false;
@@ -850,7 +855,7 @@ export default function TodayScreen() {
       case 'flight':
         baseActions.push(
           { icon: <Navigation size={22} color="#3B82F6" />, label: 'To Airport', color: '#3B82F6', onPress: handleNavigate },
-          { icon: <CreditCard size={22} color="#8B5CF6" />, label: 'Boarding Pass', color: '#8B5CF6', onPress: () => router.push(`/trip/${nextUp.trip_id}`) }
+          { icon: <CreditCard size={22} color="#8B5CF6" />, label: 'Boarding Pass', color: '#8B5CF6', onPress: () => router.push(`/boarding-pass?reservationId=${nextUp.id}`) }
         );
         break;
       case 'hotel':

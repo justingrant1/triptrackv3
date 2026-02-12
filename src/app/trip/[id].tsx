@@ -41,7 +41,7 @@ import { useTrip, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservations, useDeleteReservation } from '@/lib/hooks/useReservations';
 import { useTripExpenses } from '@/lib/hooks/useReceipts';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatDate, formatDateLong, formatCurrency, isToday, isTomorrow, getLiveStatus, LiveStatus } from '@/lib/utils';
+import { formatTime, formatTimeFromISO, formatDate, formatDateLong, formatCurrency, isToday, isTomorrow, getLiveStatus, LiveStatus, getFlightDuration, parseDateOnly } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { shareTripNative } from '@/lib/sharing';
@@ -194,8 +194,8 @@ function ExpandedDetails({ reservation, onCopyConfirmation }: { reservation: Res
     const arrAirport = d['Arrival Airport'] || d['To'] || null;
     const depCode = extractAirportCode(depAirport) || extractAirportCode(reservation.title);
     const arrCode = extractAirportCode(arrAirport) || extractAirportCode(reservation.title);
-    const depTime = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
-    const arrTime = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    const depTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
+    const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
 
     // Clean airport names (remove code if we extracted it)
     const depName = depAirport?.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-–]\s*/, '') || null;
@@ -281,8 +281,8 @@ function ExpandedDetails({ reservation, onCopyConfirmation }: { reservation: Res
 
   // 🏨 HOTEL layout
   if (reservation.type === 'hotel') {
-    const checkIn = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
-    const checkOut = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    const checkIn = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
+    const checkOut = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
     const checkInDate = reservation.start_time ? formatDate(new Date(reservation.start_time)) : null;
     const checkOutDate = reservation.end_time ? formatDate(new Date(reservation.end_time)) : null;
 
@@ -378,9 +378,9 @@ function ExpandedDetails({ reservation, onCopyConfirmation }: { reservation: Res
 
   // 🚗 CAR RENTAL layout
   if (reservation.type === 'car') {
-    const pickupTime = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
+    const pickupTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
     const pickupDate = reservation.start_time ? formatDate(new Date(reservation.start_time)) : null;
-    const dropoffTime = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    const dropoffTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
     const dropoffDate = reservation.end_time ? formatDate(new Date(reservation.end_time)) : null;
 
     return (
@@ -458,8 +458,8 @@ function ExpandedDetails({ reservation, onCopyConfirmation }: { reservation: Res
   if (reservation.type === 'train') {
     const depStation = d['Departure Station'] || d['From'] || null;
     const arrStation = d['Arrival Station'] || d['To'] || null;
-    const depTime = reservation.start_time ? formatTime(new Date(reservation.start_time)) : null;
-    const arrTime = reservation.end_time ? formatTime(new Date(reservation.end_time)) : null;
+    const depTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
+    const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
 
     return (
       <View className="px-4 py-3">
@@ -748,26 +748,34 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
                   <Text className="text-slate-500 text-xs ml-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                     {reservation.type === 'flight' || reservation.type === 'train'
                       ? (() => {
-                          const depTime = formatTime(new Date(reservation.start_time));
+                          const depTime = formatTimeFromISO(reservation.start_time);
+                          const flightDur = getFlightDuration(reservation);
+                          if (flightDur) {
+                            return `${depTime} · ${flightDur}`;
+                          }
                           if (reservation.end_time) {
-                            const diffMs = new Date(reservation.end_time).getTime() - new Date(reservation.start_time).getTime();
-                            const totalMins = Math.round(diffMs / 60000);
-                            if (totalMins > 0) {
-                              const hrs = Math.floor(totalMins / 60);
-                              const mins = totalMins % 60;
-                              const duration = hrs > 0
-                                ? (mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`)
-                                : `${mins}m`;
-                              return `${depTime} · ${duration}`;
+                            // Fallback: compute duration only for non-flight or same-timezone trips
+                            // For flights, naive end-start is wrong because departure/arrival are in different timezones
+                            if (reservation.type !== 'flight') {
+                              const diffMs = new Date(reservation.end_time).getTime() - new Date(reservation.start_time).getTime();
+                              const totalMins = Math.round(diffMs / 60000);
+                              if (totalMins > 0 && totalMins < 1440) {
+                                const hrs = Math.floor(totalMins / 60);
+                                const mins = totalMins % 60;
+                                const duration = hrs > 0
+                                  ? (mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`)
+                                  : `${mins}m`;
+                                return `${depTime} · ${duration}`;
+                              }
                             }
                           }
                           return depTime;
                         })()
                       : (() => {
                           // Hotels, cars, etc. — show time range
-                          const startTime = formatTime(new Date(reservation.start_time));
+                          const startTime = formatTimeFromISO(reservation.start_time);
                           if (reservation.end_time) {
-                            return `${startTime} - ${formatTime(new Date(reservation.end_time))}`;
+                            return `${startTime} - ${formatTimeFromISO(reservation.end_time)}`;
                           }
                           return startTime;
                         })()
@@ -1114,7 +1122,7 @@ function TripDetailScreenContent() {
               )}
             </View>
             <Text className="text-slate-500 text-sm mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-              {formatDateLong(new Date(trip.start_date))} - {formatDateLong(new Date(trip.end_date))}
+              {formatDateLong(parseDateOnly(trip.start_date))} - {formatDateLong(parseDateOnly(trip.end_date))}
             </Text>
 
             {/* Expense Summary Card */}

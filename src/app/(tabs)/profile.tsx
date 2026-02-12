@@ -46,6 +46,7 @@ import { useAllReceipts } from '@/lib/hooks/useReceipts';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { Alert, Image } from 'react-native';
 import { deleteAccount } from '@/lib/auth';
+import { parseDateOnly } from '@/lib/utils';
 
 // Dynamic version from app config
 const appVersion = Constants.expoConfig?.version || '1.0.0';
@@ -144,8 +145,8 @@ export default function ProfileScreen() {
     let totalDays = 0;
     for (const trip of trips) {
       if (trip.start_date && trip.end_date) {
-        const start = new Date(trip.start_date);
-        const end = new Date(trip.end_date);
+        const start = parseDateOnly(trip.start_date);
+        const end = parseDateOnly(trip.end_date);
         const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
         totalDays += days;
       }

@@ -5,6 +5,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import type { Receipt, Trip } from './types/database';
+import { parseDateOnly } from './utils';
 
 /**
  * Format a number as currency
@@ -76,7 +77,7 @@ export function generateReceiptsCSV(receipts: Receipt[], trip?: Trip): string {
     csv += '\n';
     csv += `Trip,${escapeCSVField(trip.name)}\n`;
     csv += `Destination,${escapeCSVField(trip.destination)}\n`;
-    csv += `Dates,${formatDateForCSV(new Date(trip.start_date))} - ${formatDateForCSV(new Date(trip.end_date))}\n`;
+    csv += `Dates,${formatDateForCSV(parseDateOnly(trip.start_date))} - ${formatDateForCSV(parseDateOnly(trip.end_date))}\n`;
   }
 
   return csv;
@@ -93,7 +94,7 @@ export function generateReceiptsTextReport(receipts: Receipt[], trip?: Trip): st
     report += `${'='.repeat(50)}\n\n`;
     report += `Trip: ${trip.name}\n`;
     report += `Destination: ${trip.destination}\n`;
-    report += `Dates: ${formatDateForCSV(new Date(trip.start_date))} - ${formatDateForCSV(new Date(trip.end_date))}\n\n`;
+    report += `Dates: ${formatDateForCSV(parseDateOnly(trip.start_date))} - ${formatDateForCSV(parseDateOnly(trip.end_date))}\n\n`;
   } else {
     report += `EXPENSE REPORT\n`;
     report += `${'='.repeat(50)}\n\n`;

@@ -40,6 +40,7 @@ import { useTrip } from '@/lib/hooks/useTrips';
 import { useCreateReservation } from '@/lib/hooks/useReservations';
 import { checkFlightStatusForTrip, extractFlightNumber } from '@/lib/flight-status';
 import type { Reservation } from '@/lib/types/database';
+import { parseDateOnly } from '@/lib/utils';
 
 type ReservationType = Reservation['type'];
 
@@ -122,7 +123,7 @@ export default function AddReservationScreen() {
     setPickerTarget(target);
     setPickerMode(mode);
     const currentDate = target === 'start' ? startDateTime : endDateTime;
-    setTempDate(currentDate ?? (trip ? new Date(trip.start_date) : new Date()));
+    setTempDate(currentDate ?? (trip ? parseDateOnly(trip.start_date) : new Date()));
     setShowPicker(true);
   };
 

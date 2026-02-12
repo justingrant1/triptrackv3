@@ -9,6 +9,7 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
+import { parseDateOnly } from './utils';
 
 const REMINDER_STORAGE_KEY = '@triptrack_reminders';
 
@@ -388,7 +389,7 @@ export async function rescheduleRemindersForTrip(trip: {
   const tripKey = `trip_${trip.id}`;
   await cancelRemindersForEntity(tripKey);
 
-  const startDate = new Date(trip.start_date);
+  const startDate = parseDateOnly(trip.start_date);
   const now = new Date();
   const hoursUntil = (startDate.getTime() - now.getTime()) / (1000 * 60 * 60);
 

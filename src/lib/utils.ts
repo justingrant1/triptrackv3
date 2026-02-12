@@ -1,7 +1,352 @@
 import type { Reservation } from './types/database';
 import type { FlightStatusData, FlightPhase } from './flight-status';
 
+// ─── IATA Airport Timezone Lookup ────────────────────────────────────────────
+// Fallback for reservations that don't have explicit "Departure Timezone" in details.
+// Maps major IATA airport codes to their standard UTC offset strings.
+// This covers the ~100 busiest airports worldwide.
+const AIRPORT_TIMEZONE_OFFSETS: Record<string, string> = {
+  // US - Eastern (UTC-5)
+  ATL: '-05:00', JFK: '-05:00', EWR: '-05:00', LGA: '-05:00', BOS: '-05:00',
+  MIA: '-05:00', FLL: '-05:00', MCO: '-05:00', PHL: '-05:00', CLT: '-05:00',
+  IAD: '-05:00', DCA: '-05:00', BWI: '-05:00', DTW: '-05:00', CLE: '-05:00',
+  PIT: '-05:00', RDU: '-05:00', TPA: '-05:00', RSW: '-05:00', PBI: '-05:00',
+  BUF: '-05:00', SYR: '-05:00', JAX: '-05:00', IND: '-05:00', CMH: '-05:00',
+  CVG: '-05:00', SDF: '-05:00', BNA: '-05:00', MEM: '-05:00',
+  // US - Central (UTC-6)
+  ORD: '-06:00', MDW: '-06:00', DFW: '-06:00', IAH: '-06:00', HOU: '-06:00',
+  MSP: '-06:00', STL: '-06:00', MCI: '-06:00', AUS: '-06:00', SAT: '-06:00',
+  MSY: '-06:00', OMA: '-06:00', MKE: '-06:00', OKC: '-06:00', TUL: '-06:00',
+  // US - Mountain (UTC-7)
+  DEN: '-07:00', SLC: '-07:00', PHX: '-07:00', ABQ: '-07:00', ELP: '-07:00',
+  TUS: '-07:00', BOI: '-07:00', COS: '-07:00',
+  // US - Pacific (UTC-8)
+  LAX: '-08:00', SFO: '-08:00', SEA: '-08:00', SAN: '-08:00', PDX: '-08:00',
+  SJC: '-08:00', OAK: '-08:00', SMF: '-08:00', BUR: '-08:00', SNA: '-08:00',
+  LGB: '-08:00', ONT: '-08:00', PSP: '-08:00',
+  // US - Alaska/Hawaii
+  ANC: '-09:00', HNL: '-10:00', OGG: '-10:00', KOA: '-10:00', LIH: '-10:00',
+  // Canada
+  YYZ: '-05:00', YUL: '-05:00', YOW: '-05:00', YVR: '-08:00', YYC: '-07:00',
+  YEG: '-07:00', YWG: '-06:00', YHZ: '-04:00',
+  // Mexico / Central America
+  MEX: '-06:00', CUN: '-05:00', GDL: '-06:00', SJD: '-07:00', PVR: '-06:00',
+  SJO: '-06:00', PTY: '-05:00',
+  // Caribbean
+  SXM: '-04:00', MBJ: '-05:00', NAS: '-05:00', PUJ: '-04:00', SDQ: '-04:00',
+  SJU: '-04:00', STT: '-04:00', AUA: '-04:00', CUR: '-04:00',
+  // South America
+  GRU: '-03:00', GIG: '-03:00', EZE: '-03:00', SCL: '-04:00', BOG: '-05:00',
+  LIM: '-05:00', UIO: '-05:00', CCS: '-04:00',
+  // Europe - GMT/UTC+0
+  LHR: '+00:00', LGW: '+00:00', STN: '+00:00', LTN: '+00:00', MAN: '+00:00',
+  EDI: '+00:00', DUB: '+00:00', LIS: '+00:00',
+  // Europe - CET (UTC+1)
+  CDG: '+01:00', ORY: '+01:00', AMS: '+01:00', FRA: '+01:00', MUC: '+01:00',
+  ZRH: '+01:00', BCN: '+01:00', MAD: '+01:00', FCO: '+01:00', MXP: '+01:00',
+  VCE: '+01:00', BRU: '+01:00', VIE: '+01:00', CPH: '+01:00', OSL: '+01:00',
+  ARN: '+01:00', HEL: '+02:00', WAW: '+01:00', PRG: '+01:00', BUD: '+01:00',
+  // Europe - EET (UTC+2)
+  ATH: '+02:00', IST: '+03:00', CAI: '+02:00',
+  // Middle East
+  DXB: '+04:00', AUH: '+04:00', DOH: '+03:00', RUH: '+03:00', JED: '+03:00',
+  AMM: '+03:00', TLV: '+02:00', BAH: '+03:00', KWI: '+03:00', MCT: '+04:00',
+  // Africa
+  JNB: '+02:00', CPT: '+02:00', NBO: '+03:00', ADD: '+03:00', LOS: '+01:00',
+  ACC: '+00:00', CMN: '+01:00',
+  // South Asia
+  DEL: '+05:30', BOM: '+05:30', BLR: '+05:30', MAA: '+05:30', CCU: '+05:30',
+  HYD: '+05:30', CMB: '+05:30', DAC: '+06:00', KTM: '+05:45',
+  // Southeast Asia
+  SIN: '+08:00', BKK: '+07:00', KUL: '+08:00', CGK: '+07:00', MNL: '+08:00',
+  SGN: '+07:00', HAN: '+07:00', RGN: '+06:30', PNH: '+07:00',
+  // East Asia
+  NRT: '+09:00', HND: '+09:00', KIX: '+09:00', ICN: '+09:00', GMP: '+09:00',
+  PEK: '+08:00', PVG: '+08:00', HKG: '+08:00', TPE: '+08:00', CTS: '+09:00',
+  FUK: '+09:00', NGO: '+09:00',
+  // Oceania
+  SYD: '+11:00', MEL: '+11:00', BNE: '+10:00', PER: '+08:00', AKL: '+13:00',
+  CHC: '+13:00', NAN: '+12:00',
+};
+
+/**
+ * Look up the UTC offset for an IATA airport code.
+ * Returns offset string like "-08:00" or null if not found.
+ */
+function getAirportTimezoneOffset(code: string | null | undefined): string | null {
+  if (!code) return null;
+  return AIRPORT_TIMEZONE_OFFSETS[code.toUpperCase()] ?? null;
+}
+
+/**
+ * Extract departure airport code from a reservation's title, subtitle, or details.
+ * Looks for patterns like "LAX → HND", "From: LAX", "Departure Airport: LAX"
+ */
+function extractDepartureAirport(reservation: Reservation): string | null {
+  const details = reservation.details as Record<string, any> | null;
+  
+  // Check details fields first (most reliable)
+  const depAirport = details?.['Departure Airport'] || details?.['From'] || details?.['Origin'];
+  if (depAirport && typeof depAirport === 'string') {
+    const code = extractAirportCode(depAirport);
+    if (code) return code;
+  }
+  
+  // Check title for "XXX → YYY" or "XXX - YYY" pattern
+  const title = reservation.title || '';
+  const routeMatch = title.match(/\b([A-Z]{3})\s*[→\-–>]+\s*[A-Z]{3}\b/);
+  if (routeMatch) return routeMatch[1];
+  
+  // Check subtitle
+  const subtitle = reservation.subtitle || '';
+  const subRouteMatch = subtitle.match(/\b([A-Z]{3})\s*[→\-–>]+\s*[A-Z]{3}\b/);
+  if (subRouteMatch) return subRouteMatch[1];
+  
+  // Check location field
+  const location = reservation.location || '';
+  const locCode = extractAirportCode(location);
+  if (locCode) return locCode;
+  
+  return null;
+}
+
+/**
+ * Extract arrival airport code from a reservation's title, subtitle, or details.
+ */
+function extractArrivalAirport(reservation: Reservation): string | null {
+  const details = reservation.details as Record<string, any> | null;
+  
+  // Check details fields first
+  const arrAirport = details?.['Arrival Airport'] || details?.['To'] || details?.['Destination'];
+  if (arrAirport && typeof arrAirport === 'string') {
+    const code = extractAirportCode(arrAirport);
+    if (code) return code;
+  }
+  
+  // Check title for "XXX → YYY" pattern — grab the second code
+  const title = reservation.title || '';
+  const routeMatch = title.match(/\b[A-Z]{3}\s*[→\-–>]+\s*([A-Z]{3})\b/);
+  if (routeMatch) return routeMatch[1];
+  
+  // Check subtitle
+  const subtitle = reservation.subtitle || '';
+  const subRouteMatch = subtitle.match(/\b[A-Z]{3}\s*[→\-–>]+\s*([A-Z]{3})\b/);
+  if (subRouteMatch) return subRouteMatch[1];
+  
+  return null;
+}
+
+// ─── Timezone-Aware Flight Utilities ─────────────────────────────────────────
+
+/**
+ * Convert a local time string + timezone offset to a real UTC Date.
+ * 
+ * Our DB stores times as timezone-naive local times (e.g., "2026-02-12T10:10:00").
+ * To compute accurate countdowns, we need to know the UTC offset at the location.
+ * 
+ * @param localISO - Timezone-naive ISO string like "2026-02-12T10:10:00"
+ * @param tzOffset - Timezone offset string like "-08:00", "+09:00", "-05:00"
+ * @returns A Date object representing the correct UTC instant, or null if offset is missing
+ */
+export function toUTCDate(localISO: string, tzOffset: string | null | undefined): Date | null {
+  if (!localISO || !tzOffset) return null;
+  
+  try {
+    // Parse the offset string (e.g., "-08:00" → -480 minutes, "+09:00" → +540 minutes)
+    const offsetMatch = tzOffset.match(/^([+-])(\d{1,2}):?(\d{2})$/);
+    if (!offsetMatch) return null;
+    
+    const sign = offsetMatch[1] === '+' ? 1 : -1;
+    const hours = parseInt(offsetMatch[2], 10);
+    const minutes = parseInt(offsetMatch[3], 10);
+    const totalOffsetMinutes = sign * (hours * 60 + minutes);
+    
+    // Parse the local time as if it were UTC, then subtract the offset to get real UTC
+    // e.g., 10:10 at UTC-8 → real UTC is 10:10 + 8:00 = 18:10 UTC
+    // Strip any existing timezone suffix first — Supabase returns "+00:00" which
+    // would create a malformed string like "...+00:00Z" causing Invalid Date.
+    const stripped = localISO.replace(/[Zz]$/, '').replace(/[+-]\d{2}:?\d{2}$/, '');
+    const localDate = new Date(stripped + 'Z'); // Force UTC interpretation
+    if (isNaN(localDate.getTime())) return null; // Guard: Invalid Date → return null
+    const utcMs = localDate.getTime() - (totalOffsetMinutes * 60 * 1000);
+    const result = new Date(utcMs);
+    return isNaN(result.getTime()) ? null : result; // Double guard
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the flight duration for a reservation.
+ * Uses a priority chain:
+ * 1. AI-provided "Duration" field (most accurate for cross-timezone flights)
+ * 2. Timezone-aware calculation using departure/arrival timezone offsets
+ * 3. Naive calculation from start_time/end_time (accurate for same-timezone flights)
+ * 
+ * @returns Duration string like "11h 55m", or null if cannot be determined
+ */
+export function getFlightDuration(reservation: Reservation): string | null {
+  const details = reservation.details as Record<string, any> | null;
+  
+  // Priority 1: AI-provided duration string
+  const aiDuration = details?.['Duration'] || details?.['Journey Time'];
+  if (aiDuration && typeof aiDuration === 'string' && aiDuration.trim()) {
+    return aiDuration.trim();
+  }
+  
+  // Priority 2: Timezone-aware calculation
+  if (reservation.start_time && reservation.end_time && details) {
+    const depTz = details['Departure Timezone'] as string | undefined;
+    const arrTz = details['Arrival Timezone'] as string | undefined;
+    
+    if (depTz && arrTz) {
+      const depUTC = toUTCDate(reservation.start_time, depTz);
+      const arrUTC = toUTCDate(reservation.end_time, arrTz);
+      
+      if (depUTC && arrUTC) {
+        const diffMs = arrUTC.getTime() - depUTC.getTime();
+        if (diffMs > 0) {
+          const totalMins = Math.round(diffMs / 60000);
+          const hours = Math.floor(totalMins / 60);
+          const mins = totalMins % 60;
+          if (hours > 0) {
+            return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+          }
+          return `${mins}m`;
+        }
+      }
+    }
+  }
+  
+  // Priority 3: Naive calculation (works when times are in same timezone)
+  // For cross-timezone flights without offset data, this may be inaccurate
+  // but still useful as a rough estimate
+  if (reservation.start_time && reservation.end_time) {
+    const start = new Date(reservation.start_time);
+    const end = new Date(reservation.end_time);
+    const diffMs = end.getTime() - start.getTime();
+    // Allow up to 30 hours (covers ultra-long-haul + timezone artifacts)
+    if (diffMs > 0 && diffMs < 30 * 60 * 60 * 1000) {
+      const totalMins = Math.round(diffMs / 60000);
+      const hours = Math.floor(totalMins / 60);
+      const mins = totalMins % 60;
+      if (hours > 0) {
+        return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+      }
+      return `${mins}m`;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Get the correct UTC departure Date for a flight reservation.
+ * Priority chain:
+ * 1. Explicit "Departure Timezone" from details (set by email parser)
+ * 2. Airport code lookup from title/details (e.g., LAX → UTC-8)
+ * 3. safeParseDate fallback (treats as UTC on Hermes — least accurate)
+ */
+export function getFlightDepartureUTC(reservation: Reservation): Date {
+  const details = reservation.details as Record<string, any> | null;
+  const depTz = details?.['Departure Timezone'] as string | undefined;
+  
+  // Priority 1: Explicit timezone from details
+  const utcDate = toUTCDate(reservation.start_time, depTz);
+  if (utcDate) return utcDate;
+  
+  // Priority 2: Look up timezone from departure airport code
+  const depCode = extractDepartureAirport(reservation);
+  const airportTz = getAirportTimezoneOffset(depCode);
+  const airportUtc = toUTCDate(reservation.start_time, airportTz);
+  if (airportUtc) return airportUtc;
+  
+  // Priority 3: Fallback — safeParseDate (Hermes treats naive strings as UTC)
+  return safeParseDate(reservation.start_time);
+}
+
+/**
+ * Get the correct UTC arrival Date for a flight reservation.
+ * Priority chain mirrors getFlightDepartureUTC:
+ * 1. Explicit "Arrival Timezone" from details
+ * 2. Airport code lookup from title/details (e.g., HND → UTC+9)
+ * 3. Direct Date parsing fallback
+ */
+export function getFlightArrivalUTC(reservation: Reservation): Date | null {
+  if (!reservation.end_time) return null;
+  const details = reservation.details as Record<string, any> | null;
+  const arrTz = details?.['Arrival Timezone'] as string | undefined;
+  
+  // Priority 1: Explicit timezone from details
+  const utcDate = toUTCDate(reservation.end_time, arrTz);
+  if (utcDate) return utcDate;
+  
+  // Priority 2: Look up timezone from arrival airport code
+  const arrCode = extractArrivalAirport(reservation);
+  const airportTz = getAirportTimezoneOffset(arrCode);
+  const airportUtc = toUTCDate(reservation.end_time, airportTz);
+  if (airportUtc) return airportUtc;
+  
+  // Priority 3: Fallback
+  return safeParseDate(reservation.end_time);
+}
+
+/**
+ * Safely parse a date string, handling Supabase formats with microseconds
+ * that can cause Invalid Date on iOS JavaScriptCore.
+ * e.g., "2026-02-12T10:10:00.000000" → valid Date
+ */
+export function safeParseDate(dateStr: string | null | undefined): Date {
+  if (!dateStr) return new Date(); // fallback to now
+  
+  // Try direct parsing first
+  let d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d;
+  
+  // If that fails, try trimming microseconds (>3 decimal places)
+  // "2026-02-12T10:10:00.000000" → "2026-02-12T10:10:00.000"
+  const trimmed = dateStr.replace(/(\.\d{3})\d+/, '$1');
+  d = new Date(trimmed);
+  if (!isNaN(d.getTime())) return d;
+  
+  // Try replacing space with T (Supabase sometimes returns "2026-02-12 10:10:00")
+  const withT = dateStr.replace(' ', 'T');
+  d = new Date(withT);
+  if (!isNaN(d.getTime())) return d;
+  
+  // Last resort: extract date parts manually
+  const match = dateStr.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (match) {
+    return new Date(
+      parseInt(match[1]),
+      parseInt(match[2]) - 1,
+      parseInt(match[3]),
+      parseInt(match[4]),
+      parseInt(match[5])
+    );
+  }
+  
+  return new Date(); // absolute fallback
+}
+
 type ReservationType = Reservation['type'];
+
+/**
+ * Parse a YYYY-MM-DD date string as LOCAL noon, not UTC midnight.
+ * Prevents the off-by-one-day display bug in Western Hemisphere timezones.
+ * 
+ * JavaScript's `new Date("2026-02-12")` creates midnight UTC, which in EST
+ * becomes 7 PM on Feb 11 — showing the wrong date. Using noon local time
+ * ensures no timezone on Earth (+14 to -12) can shift it to a different day.
+ */
+export function parseDateOnly(dateStr: string | null | undefined): Date {
+  if (!dateStr) return new Date();
+  // Only apply the noon trick to pure date strings (YYYY-MM-DD)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return new Date(dateStr + 'T12:00:00');
+  }
+  return new Date(dateStr);
+}
 
 export const formatTime = (date: Date): string => {
   return date.toLocaleTimeString('en-US', {
@@ -13,27 +358,35 @@ export const formatTime = (date: Date): string => {
 
 /**
  * Format a time string from an ISO timestamp, preserving the original local time.
- * If the ISO string has no timezone offset (e.g. "2026-03-14T07:15:00"),
- * we extract the time directly from the string to avoid device timezone conversion.
- * This is critical for flight times which should display in departure city's local time.
+ * 
+ * Travel times (flights, hotels, etc.) should ALWAYS display in the local time
+ * of the departure/arrival/check-in location — NOT the user's device timezone.
+ * 
+ * This function extracts the time directly from the ISO string to avoid
+ * any device timezone conversion. Works for both:
+ * - Timezone-naive strings: "2026-03-14T10:10:00" (from email parser)
+ * - Timezone-aware strings: "2026-03-14T10:10:00Z" or "2026-03-14T10:10:00+00:00" (from APIs)
+ * 
+ * For timezone-aware strings, we STILL extract the raw time because travel APIs
+ * (like AirLabs) return local airport times — the offset is informational, not
+ * something we should convert from.
  */
 export const formatTimeFromISO = (isoString: string): string => {
-  // Check if the string has a timezone offset (Z, +HH:MM, -HH:MM)
-  const hasTimezone = /[Zz]$|[+-]\d{2}:\d{2}$|[+-]\d{4}$/.test(isoString);
+  if (!isoString) return '—';
   
-  if (!hasTimezone) {
-    // No timezone — extract time directly from the string to preserve local time
-    const match = isoString.match(/T(\d{2}):(\d{2})/);
-    if (match) {
-      const hours = parseInt(match[1], 10);
-      const minutes = match[2];
-      const period = hours >= 12 ? 'PM' : 'AM';
-      const displayHour = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-      return `${displayHour}:${minutes} ${period}`;
-    }
+  // Always try to extract time directly from the ISO string first.
+  // This preserves the local time at the location (airport, hotel, etc.)
+  // regardless of the user's device timezone.
+  const match = isoString.match(/T(\d{2}):(\d{2})/);
+  if (match) {
+    const hours = parseInt(match[1], 10);
+    const minutes = match[2];
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHour = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    return `${displayHour}:${minutes} ${period}`;
   }
   
-  // Has timezone — use standard Date parsing (converts to device local time)
+  // Fallback: if no T separator found, try Date parsing as last resort
   return formatTime(new Date(isoString));
 };
 
@@ -348,46 +701,65 @@ export function getFlightAwareCountdown(
     }
 
     default: {
-      // scheduled / unknown — use departure time (estimated if available)
-      const depTime = flightStatus.dep_estimated || flightStatus.dep_scheduled || reservation.start_time;
-      const depDate = new Date(depTime);
-      const diffMs = depDate.getTime() - now.getTime();
-      const diffMins = Math.floor(diffMs / 60000);
+      // scheduled / unknown — use live flight data for countdown when available.
+      // dep_scheduled_utc is the original scheduled departure in UTC.
+      // Add dep_delay (minutes) to get the actual expected departure time.
+      // This is more accurate than reservation.start_time which may have
+      // timezone storage issues (local time stored as UTC).
+      const depUtcStr = flightStatus.dep_scheduled_utc;
+      if (depUtcStr) {
+        const depUtcMs = new Date(depUtcStr).getTime();
+        if (!isNaN(depUtcMs)) {
+          const delayMs = (flightStatus.dep_delay ?? 0) * 60 * 1000;
+          const actualDepMs = depUtcMs + delayMs;
+          const diffMs = actualDepMs - now.getTime();
+          const diffMins = Math.floor(diffMs / 60000);
+          const hours = Math.floor(diffMins / 60);
+          const mins = diffMins % 60;
 
-      // Check if we're in the boarding window (≤30 min before departure)
-      if (diffMins <= 30 && diffMins > 0) {
-        return { label: `${diffMins}m`, actionLabel: 'Board', urgent: true, minutes: diffMins, colorHint: 'amber' };
-      }
-      if (diffMins <= 0) {
-        // Past departure but API still says scheduled — likely boarding/departing
-        return { label: 'Now', actionLabel: 'Board', urgent: true, minutes: diffMins, colorHint: 'amber' };
-      }
+          const isDelayed = flightStatus.dep_estimated && flightStatus.dep_estimated !== flightStatus.dep_scheduled;
+          const actionLabel = isDelayed
+            ? (diffMins <= 30 && diffMins > 0 ? 'Board' : 'Departs')
+            : (diffMins <= 30 && diffMins > 0 ? 'Board' : 'Departs');
 
-      // Normal countdown to departure
-      const hours = Math.floor(diffMins / 60);
-      const mins = diffMins % 60;
-      const timeLabel = hours >= 24
-        ? `${Math.floor(hours / 24)}d ${hours % 24}h`
-        : hours > 0
-          ? (mins > 0 ? `${hours}h ${mins}m` : `${hours}h`)
-          : `${diffMins}m`;
-      return {
-        label: timeLabel,
-        actionLabel: 'Departs',
-        urgent: diffMins < 120,
-        minutes: diffMins,
-        colorHint: 'default',
-      };
+          if (diffMins < 0) {
+            return { label: 'Now', actionLabel: 'Board', urgent: true, minutes: diffMins, colorHint: 'default' };
+          }
+          if (diffMins < 30) {
+            return { label: `${diffMins}m`, actionLabel, urgent: true, minutes: diffMins, colorHint: 'amber' };
+          }
+
+          const timeLabel = hours >= 24
+            ? `${Math.floor(hours / 24)}d ${hours % 24}h`
+            : hours > 0
+              ? (mins > 0 ? `${hours}h ${mins}m` : `${hours}h`)
+              : `${diffMins}m`;
+
+          return { label: timeLabel, actionLabel, urgent: diffMins < 120, minutes: diffMins, colorHint: 'default' };
+        }
+      }
+      // No live UTC data — fall back to basic countdown
+      return getBasicCountdown(reservation);
     }
   }
 }
 
 /**
  * Basic countdown for non-flight reservations or flights without live data.
+ * For flights, uses timezone-aware UTC departure time when available.
  */
 function getBasicCountdown(reservation: Reservation): FlightAwareCountdown {
   const now = new Date();
-  const startDate = new Date(reservation.start_time);
+  // For flights, use timezone-aware departure time for accurate countdown
+  let startDate = reservation.type === 'flight'
+    ? getFlightDepartureUTC(reservation)
+    : safeParseDate(reservation.start_time);
+  
+  // ABSOLUTE NaN guard — if startDate is still invalid, use safeParseDate as last resort
+  if (isNaN(startDate.getTime())) {
+    startDate = safeParseDate(reservation.start_time);
+  }
+  
   const diffMs = startDate.getTime() - now.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const hours = Math.floor(diffMins / 60);
@@ -464,31 +836,41 @@ export function getContextualTimeInfo(
 
   switch (phase) {
     case 'landed': {
-      const arrTime = flightStatus.arr_actual || flightStatus.arr_estimated || flightStatus.arr_scheduled;
+      // For landed flights, show arrival time from reservation (local time)
+      // Fall back to flight status only if reservation has no end_time
       return {
         label: flightStatus.arr_actual ? 'Arrived' : 'Arrival',
-        time: arrTime ? formatTime(new Date(arrTime)) : '—',
+        time: reservation.end_time
+          ? formatTimeFromISO(reservation.end_time)
+          : formatTimeFromISO(flightStatus.arr_actual || flightStatus.arr_estimated || flightStatus.arr_scheduled || reservation.start_time),
       };
     }
     case 'active': {
-      const arrTime = flightStatus.arr_estimated || flightStatus.arr_scheduled;
+      // In-flight — show arrival time from reservation (local time)
       return {
         label: 'Est. Arrival',
-        time: arrTime ? formatTime(new Date(arrTime)) : '—',
+        time: reservation.end_time
+          ? formatTimeFromISO(reservation.end_time)
+          : formatTimeFromISO(flightStatus.arr_estimated || flightStatus.arr_scheduled || reservation.end_time || reservation.start_time),
       };
     }
     case 'cancelled':
       return {
         label: 'Was scheduled',
-        time: formatTime(new Date(flightStatus.dep_scheduled || reservation.start_time)),
+        time: formatTimeFromISO(reservation.start_time),
       };
     default: {
-      // Scheduled — show departure time (estimated if different from scheduled)
-      const depTime = flightStatus.dep_estimated || flightStatus.dep_scheduled || reservation.start_time;
-      const isEstimated = flightStatus.dep_estimated && flightStatus.dep_estimated !== flightStatus.dep_scheduled;
+      // Scheduled — prefer live flight data (local airport times from AirLabs)
+      // over reservation.start_time which may have timezone storage issues.
+      // AirLabs dep_estimated/dep_scheduled are LOCAL airport times, perfect for display.
+      const liveDepTime = flightStatus.dep_estimated || flightStatus.dep_scheduled;
       return {
-        label: isEstimated ? 'Est. Departure' : 'Departs',
-        time: formatTime(new Date(depTime)),
+        label: flightStatus.dep_estimated && flightStatus.dep_estimated !== flightStatus.dep_scheduled
+          ? 'New Dep.'
+          : 'Departs',
+        time: liveDepTime
+          ? formatTimeFromISO(liveDepTime)
+          : formatTimeFromISO(reservation.start_time),
       };
     }
   }

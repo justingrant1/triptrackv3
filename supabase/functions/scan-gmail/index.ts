@@ -106,6 +106,18 @@ interface ScanStats {
 // Known Travel Sender Domains
 // ============================================================
 
+/**
+ * Strip timezone offset from an ISO datetime string.
+ * Ensures local times are stored as-is without UTC conversion by PostgreSQL's timestamptz.
+ * e.g., "2026-02-12T10:10:00-08:00" → "2026-02-12T10:10:00"
+ *       "2026-02-12T10:10:00Z"       → "2026-02-12T10:10:00"
+ *       "2026-02-12T10:10:00"         → "2026-02-12T10:10:00" (unchanged)
+ */
+function stripTimezoneOffset(isoString: string | null | undefined): string | null {
+  if (!isoString) return null;
+  return isoString.replace(/([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?)(Z|[+-]\d{2}:?\d{2})$/i, '$1');
+}
+
 const KNOWN_TRAVEL_DOMAINS = new Set([
   // Airlines — US
   'delta.com', 'united.com', 'aa.com', 'americanairlines.com',
@@ -842,13 +854,13 @@ Return JSON in this format:
       "type": "flight" | "hotel" | "car_rental" | "train" | "cruise" | "other_travel",
       "title": "Brief title (e.g., 'AA Flight MIA → LAX', 'Hilton Downtown NYC')",
       "subtitle": "Key details (e.g., 'AA 1531 - Economy', 'Deluxe King Room - 3 nights')",
-      "start_time": "ISO 8601 departure/check-in datetime",
-      "end_time": "ISO 8601 arrival/check-out datetime, or null",
+      "start_time": "YYYY-MM-DDTHH:MM:SS (LOCAL time at the location — do NOT append Z or timezone offset)",
+      "end_time": "YYYY-MM-DDTHH:MM:SS (LOCAL time at the location — do NOT append Z or timezone offset), or null",
       "location": "Destination city name for this leg/segment",
       "address": "Full street address or null",
       "confirmation_number": "Booking/confirmation number or null (same for all legs if shared)",
       "details": {
-        // For flights: "Airline", "Flight Number", "Departure Airport", "Arrival Airport", "Seat", "Class", "Gate", "Terminal", "Baggage"
+        // For flights: "Airline", "Flight Number", "Departure Airport", "Arrival Airport", "Duration" (e.g. "11h 55m" — REQUIRED, calculate from times + timezone difference), "Departure Timezone" (UTC offset e.g. "-08:00" — REQUIRED for flights), "Arrival Timezone" (UTC offset e.g. "+09:00" — REQUIRED for flights), "Seat", "Class", "Gate", "Terminal", "Baggage"
         // For hotels: "Hotel Name", "Room Type", "Nights", "Check-in Time", "Check-out Time", "Guest Name"
         // For car rentals: "Company", "Car Type", "Pickup Location", "Dropoff Location", "Pickup Time", "Dropoff Time"
         // For trains: "Train Number", "Departure Station", "Arrival Station", "Seat", "Car Number"
@@ -2071,8 +2083,8 @@ serve(async (req) => {
               type: reservationType,
               title: reservation.title,
               subtitle: reservation.subtitle || null,
-              start_time: reservation.start_time,
-              end_time: reservation.end_time || null,
+              start_time: stripTimezoneOffset(reservation.start_time) || reservation.start_time,
+              end_time: stripTimezoneOffset(reservation.end_time) || reservation.end_time || null,
               location: reservation.location || null,
               address: reservation.address || null,
               confirmation_number: reservation.confirmation_number || null,

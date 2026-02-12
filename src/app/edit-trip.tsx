@@ -8,6 +8,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTrip, useUpdateTrip } from '@/lib/hooks/useTrips';
+import { parseDateOnly } from '@/lib/utils';
 
 export default function EditTripScreen() {
   const router = useRouter();
@@ -30,8 +31,8 @@ export default function EditTripScreen() {
     if (trip) {
       setName(trip.name);
       setDestination(trip.destination);
-      setStartDate(new Date(trip.start_date));
-      setEndDate(new Date(trip.end_date));
+      setStartDate(parseDateOnly(trip.start_date));
+      setEndDate(parseDateOnly(trip.end_date));
       setCoverImage(trip.cover_image || '');
       setStatus(trip.status);
     }

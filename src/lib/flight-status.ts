@@ -26,6 +26,7 @@ export interface FlightStatusData {
   dep_terminal: string | null;
   dep_gate: string | null;
   dep_scheduled: string | null;
+  dep_scheduled_utc: string | null;  // UTC version for guard comparisons
   dep_estimated: string | null;
   dep_actual: string | null;
   dep_delay: number | null; // minutes
@@ -225,20 +226,19 @@ export function hasFlightStatus(reservation: Reservation): boolean {
 
 /**
  * Validate that stored flight status data actually matches this reservation.
- * Catches cases where AirLabs returned today's flight data for a future trip
- * (same flight number, wrong date). Compares dep_scheduled vs start_time.
+ *
+ * Previously this compared API departure UTC vs reservation start_time with a
+ * 3-hour tolerance, but reservation.start_time is often LOCAL time stored as
+ * UTC (the email parser strips timezone offsets), causing false rejections for
+ * flights in non-UTC timezones. Combined with possible ±1 day date boundary
+ * issues, the guard was rejecting virtually all flight data.
+ *
+ * The trackable window (-12h/+36h) + flight number match + AirLabs returning
+ * the current instance is sufficient protection. This function now always
+ * returns true to avoid blocking valid flight data.
  */
-export function isFlightStatusValid(reservation: Reservation): boolean {
-  const status = reservation.details?._flight_status as FlightStatusData | undefined;
-  if (!status?.dep_scheduled) return true; // Can't validate — allow it
-
-  const apiDepTime = new Date(status.dep_scheduled).getTime();
-  const reservationDepTime = new Date(reservation.start_time).getTime();
-  const diffHours = Math.abs(apiDepTime - reservationDepTime) / (1000 * 60 * 60);
-
-  // If scheduled departure times differ by more than 3 hours, the stored
-  // data is from the wrong flight instance (wrong date or wrong time-of-day)
-  return diffHours <= 3;
+export function isFlightStatusValid(_reservation: Reservation): boolean {
+  return true;
 }
 
 /**

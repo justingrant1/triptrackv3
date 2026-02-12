@@ -12,6 +12,7 @@ import { useCreateReservation } from '@/lib/hooks/useReservations';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { UpgradeModal } from '@/components/UpgradeModal';
+import { parseDateOnly } from '@/lib/utils';
 
 export default function ParseEmailScreen() {
   const router = useRouter();
@@ -259,9 +260,9 @@ export default function ParseEmailScreen() {
                     </Text>
                     <View className="flex-row items-center">
                       <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
-                        {new Date(parsedData.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {parseDateOnly(parsedData.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         {' → '}
-                        {new Date(parsedData.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {parseDateOnly(parsedData.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </Text>
                     </View>
                   </View>

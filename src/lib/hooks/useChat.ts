@@ -12,6 +12,7 @@ import { useAuthStore } from '@/lib/state/auth-store';
 import { supabase } from '@/lib/supabase';
 import { useQuery } from '@tanstack/react-query';
 import type { Reservation, ReceiptWithTrip } from '@/lib/types/database';
+import { parseDateOnly } from '@/lib/utils';
 
 const CHAT_STORAGE_KEY_PREFIX = 'triptrack_chat_history_';
 const MAX_PERSISTED_MESSAGES = 50; // Keep last 50 messages to avoid storage bloat
@@ -194,7 +195,7 @@ Make the suggestions contextual and relevant to what was just discussed. Keep th
 
     // Sort trips by start_date ascending (soonest first)
     const sortedTrips = [...trips].sort(
-      (a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
+      (a, b) => parseDateOnly(a.start_date).getTime() - parseDateOnly(b.start_date).getTime()
     );
 
     // Classify trips

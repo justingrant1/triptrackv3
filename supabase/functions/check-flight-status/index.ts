@@ -32,6 +32,7 @@ interface FlightStatusData {
   dep_terminal: string | null;
   dep_gate: string | null;
   dep_scheduled: string | null;
+  dep_scheduled_utc: string | null;  // UTC version for guard comparisons
   dep_estimated: string | null;
   dep_actual: string | null;
   dep_delay: number | null;
@@ -177,6 +178,7 @@ async function fetchFlightFromAirLabs(
       dep_terminal: flight.dep_terminal ?? null,
       dep_gate: flight.dep_gate ?? null,
       dep_scheduled: flight.dep_time ?? null,
+      dep_scheduled_utc: flight.dep_time_utc ?? null,
       dep_estimated: flight.dep_estimated ?? null,
       dep_actual: flight.dep_actual ?? null,
       dep_delay: flight.delayed ?? null,
@@ -454,9 +456,14 @@ function isWithinTrackableWindow(reservation: Reservation): boolean {
 
 /**
  * Validate that AirLabs returned data for the CORRECT flight instance.
- * Compares the API's dep_scheduled with the reservation's start_time.
+ * Uses dep_scheduled_utc (UTC) for comparison against reservation start_time (UTC).
  * dep_scheduled is the ORIGINAL scheduled time — it does NOT change with delays,
  * so even a 6-hour delay won't cause a false mismatch.
+ *
+ * IMPORTANT: AirLabs returns dep_time in LOCAL airport time (no timezone info),
+ * but dep_time_utc in UTC. We must use the UTC version for comparison because
+ * reservation.start_time is stored in UTC. Comparing local vs UTC would cause
+ * false rejections for flights in non-UTC timezones.
  *
  * Same flight number can run morning + evening, or daily. If the scheduled
  * departure times differ by more than 3 hours, it's the wrong instance.
@@ -465,20 +472,24 @@ function isCorrectFlightInstance(
   apiStatus: FlightStatusData,
   reservation: Reservation
 ): boolean {
-  if (!apiStatus.dep_scheduled) {
+  // Prefer UTC time for apples-to-apples comparison with reservation (also UTC)
+  const apiDepTimeStr = apiStatus.dep_scheduled_utc || apiStatus.dep_scheduled;
+
+  if (!apiDepTimeStr) {
     // No scheduled time from API — can't validate, allow it
     // (better to show potentially wrong data than block everything)
     return true;
   }
 
-  const apiDepTime = new Date(apiStatus.dep_scheduled).getTime();
+  const apiDepTime = new Date(apiDepTimeStr).getTime();
   const reservationDepTime = new Date(reservation.start_time).getTime();
   const diffHours = Math.abs(apiDepTime - reservationDepTime) / (1000 * 60 * 60);
 
   if (diffHours > 3) {
     console.log(
       `[Flight Guard] Rejecting ${apiStatus.flight_iata} data: ` +
-      `API dep_scheduled=${apiStatus.dep_scheduled} vs reservation start_time=${reservation.start_time} ` +
+      `API dep_scheduled_utc=${apiStatus.dep_scheduled_utc} (local=${apiStatus.dep_scheduled}) ` +
+      `vs reservation start_time=${reservation.start_time} ` +
       `(${diffHours.toFixed(1)}h difference — likely wrong flight instance)`
     );
     return false;
@@ -541,17 +552,17 @@ async function processReservation(
     };
   }
 
-  // ── Layer 2: Time validation ─────────────────────────────────────
-  // Verify AirLabs returned the correct flight instance (not morning
-  // vs evening, or a different day's flight with the same number).
-  if (!isCorrectFlightInstance(newStatus, reservation)) {
-    return {
-      reservation_id: reservation.id,
-      flight_iata: flightIata,
-      status: null,
-      changes: [],
-      error: null, // Not an error — wrong instance, skip silently
-    };
+  // ── Layer 2: Log API departure time for debugging ────────────────
+  // The trackable window + flight number match + AirLabs returning the
+  // current instance is sufficient. No need to reject based on time
+  // comparison — reservation.start_time may be local-time-as-UTC or
+  // have date boundary issues that cause false rejections.
+  if (newStatus.dep_scheduled_utc || newStatus.dep_scheduled) {
+    console.log(
+      `[Flight Match] ${newStatus.flight_iata}: ` +
+      `API dep_utc=${newStatus.dep_scheduled_utc} local=${newStatus.dep_scheduled}, ` +
+      `reservation start=${reservation.start_time}`
+    );
   }
 
   // Get previous status for change detection

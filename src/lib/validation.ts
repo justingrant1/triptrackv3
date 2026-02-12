@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseDateOnly } from './utils';
 
 /**
  * Validation schemas for TripTrack forms
@@ -31,8 +32,8 @@ export const tripSchema = z.object({
   end_date: z.string().min(1, 'End date is required'),
   cover_image: z.string().url('Invalid image URL').optional().nullable(),
 }).refine((data) => {
-  const start = new Date(data.start_date);
-  const end = new Date(data.end_date);
+  const start = parseDateOnly(data.start_date);
+  const end = parseDateOnly(data.end_date);
   return end >= start;
 }, {
   message: 'End date must be after start date',

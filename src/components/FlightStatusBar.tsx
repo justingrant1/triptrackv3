@@ -30,7 +30,7 @@ import {
   getFlightProgress,
   inferFlightPhase,
 } from '@/lib/flight-status';
-import { formatTime } from '@/lib/utils';
+import { formatTime, formatTimeFromISO } from '@/lib/utils';
 
 interface FlightStatusBarProps {
   status: FlightStatusData;
@@ -248,7 +248,7 @@ export function FlightStatusBar({ status, compact = false }: FlightStatusBarProp
             <DetailChip
               icon={<Plane size={12} color="#94A3B8" />}
               label="Departed"
-              value={formatTime(new Date(status.dep_actual))}
+              value={formatTimeFromISO(status.dep_actual)}
             />
           )}
 
@@ -257,7 +257,7 @@ export function FlightStatusBar({ status, compact = false }: FlightStatusBarProp
             <DetailChip
               icon={<Clock size={12} color="#94A3B8" />}
               label="ETA"
-              value={formatTime(new Date(status.arr_estimated))}
+              value={formatTimeFromISO(status.arr_estimated)}
             />
           )}
 
@@ -446,8 +446,26 @@ function DetailChip({
 
 function formatBoardingTime(depEstimated: string): string {
   try {
+    // Parse the time from the ISO string directly to avoid timezone conversion
+    const match = depEstimated.match(/T(\d{2}):(\d{2})/);
+    if (match) {
+      let hours = parseInt(match[1], 10);
+      let minutes = parseInt(match[2], 10);
+      // Subtract 30 minutes for boarding time
+      minutes -= 30;
+      if (minutes < 0) {
+        minutes += 60;
+        hours -= 1;
+        if (hours < 0) hours += 24;
+      }
+      const period = hours >= 12 ? 'PM' : 'AM';
+      const displayHours = hours % 12 || 12;
+      const displayMinutes = minutes.toString().padStart(2, '0');
+      return `${displayHours}:${displayMinutes} ${period}`;
+    }
+    // Fallback
     const dep = new Date(depEstimated);
-    const boarding = new Date(dep.getTime() - 30 * 60 * 1000); // 30 min before
+    const boarding = new Date(dep.getTime() - 30 * 60 * 1000);
     return formatTime(boarding);
   } catch {
     return '—';

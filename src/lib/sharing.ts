@@ -5,6 +5,7 @@
 import * as Linking from 'expo-linking';
 import { Share, Platform } from 'react-native';
 import type { Trip } from './types/database';
+import { parseDateOnly } from './utils';
 
 /**
  * Generate a deep link URL for a trip
@@ -19,12 +20,12 @@ export function generateTripDeepLink(tripId: string): string {
  * Generate a shareable message for a trip
  */
 export function generateTripShareMessage(trip: Trip): string {
-  const startDate = new Date(trip.start_date).toLocaleDateString('en-US', { 
+  const startDate = parseDateOnly(trip.start_date).toLocaleDateString('en-US', {
     month: 'short', 
     day: 'numeric',
     year: 'numeric'
   });
-  const endDate = new Date(trip.end_date).toLocaleDateString('en-US', { 
+  const endDate = parseDateOnly(trip.end_date).toLocaleDateString('en-US', {
     month: 'short', 
     day: 'numeric',
     year: 'numeric'

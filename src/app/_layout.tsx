@@ -352,6 +352,10 @@ function RootLayoutNav({
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="boarding-pass"
+          options={{ presentation: 'modal', headerShown: false }}
+        />
+        <Stack.Screen
           name="forgot-password"
           options={{ headerShown: false }}
         />

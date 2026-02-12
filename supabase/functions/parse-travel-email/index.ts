@@ -36,6 +36,19 @@ interface ParsedTrip {
   reservations: ParsedReservation[];
 }
 
+/**
+ * Strip timezone offset from an ISO datetime string.
+ * Ensures local times are stored as-is without UTC conversion.
+ * e.g., "2026-02-12T10:10:00-08:00" → "2026-02-12T10:10:00"
+ *       "2026-02-12T10:10:00Z"       → "2026-02-12T10:10:00"
+ *       "2026-02-12T10:10:00"         → "2026-02-12T10:10:00" (unchanged)
+ */
+function stripTimezoneOffset(isoString: string | null | undefined): string | null {
+  if (!isoString) return null;
+  // Remove trailing Z, +HH:MM, -HH:MM, +HHMM, -HHMM
+  return isoString.replace(/([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?)(Z|[+-]\d{2}:?\d{2})$/i, '$1');
+}
+
 async function parseEmailWithAI(emailText: string): Promise<ParsedTrip> {
   const prompt = `You are a travel email parser. Extract trip and reservation details from this confirmation email.
 
@@ -59,6 +72,9 @@ Return ONLY valid JSON in this exact format:
       "confirmation_number": "Confirmation/booking number",
       "status": "confirmed" or "cancelled" (use "cancelled" ONLY if the email is explicitly a cancellation notice),
       "details": {
+        "Duration": "flight duration as 'Xh Ym' (e.g. '11h 55m') — REQUIRED for flights, calculate from departure/arrival times and timezone difference",
+        "Departure Timezone": "UTC offset of departure location as '+HH:MM' or '-HH:MM' (e.g. '-08:00' for LAX, '+09:00' for NRT) — REQUIRED for flights",
+        "Arrival Timezone": "UTC offset of arrival location as '+HH:MM' or '-HH:MM' (e.g. '+09:00' for NRT, '-05:00' for JFK) — REQUIRED for flights",
         "Seat": "seat number (flights)",
         "Gate": "gate number (flights)",
         "Terminal": "terminal (flights)",
@@ -423,8 +439,8 @@ serve(async (req) => {
         type: res.type,
         title: res.title,
         subtitle: res.subtitle || null,
-        start_time: res.start_time,
-        end_time: res.end_time || null,
+        start_time: stripTimezoneOffset(res.start_time) || res.start_time,
+        end_time: stripTimezoneOffset(res.end_time) || res.end_time || null,
         location: res.location || null,
         address: res.address || null,
         confirmation_number: res.confirmation_number || null,
