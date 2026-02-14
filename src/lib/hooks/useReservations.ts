@@ -166,26 +166,54 @@ export function useDeleteReservation() {
     },
     onMutate: async ({ id, tripId }) => {
       const tripKey = queryKeys.reservations.byTrip(tripId);
+      const upcomingKey = queryKeys.reservations.upcoming;
+      
       await queryClient.cancelQueries({ queryKey: tripKey });
+      await queryClient.cancelQueries({ queryKey: upcomingKey });
 
-      const previous = queryClient.getQueryData<Reservation[]>(tripKey);
+      const previousTrip = queryClient.getQueryData<Reservation[]>(tripKey);
+      const previousUpcoming = queryClient.getQueryData<Reservation[]>(upcomingKey);
 
+      // Optimistically remove from trip-specific cache
       queryClient.setQueryData<Reservation[]>(tripKey, (old) =>
         (old ?? []).filter((r) => r.id !== id)
       );
 
-      return { previous, tripId, id };
+      // Optimistically remove from upcoming cache
+      queryClient.setQueryData<Reservation[]>(upcomingKey, (old) =>
+        (old ?? []).filter((r) => r.id !== id)
+      );
+
+      return { previousTrip, previousUpcoming, tripId, id };
     },
     onError: (_err, _vars, context) => {
-      if (context?.previous) {
+      if (context?.previousTrip) {
         queryClient.setQueryData(
           queryKeys.reservations.byTrip(context.tripId),
-          context.previous
+          context.previousTrip
+        );
+      }
+      if (context?.previousUpcoming) {
+        queryClient.setQueryData(
+          queryKeys.reservations.upcoming,
+          context.previousUpcoming
         );
       }
       // If deletion failed, we should reschedule notifications
       // But we don't have the reservation data here, so we'll rely on the UI refresh
       console.error('[DeleteReservation] Failed to delete, notifications may need rescheduling');
+    },
+    onSuccess: ({ id, tripId }) => {
+      // Explicitly remove from all related caches to ensure persisted cache is correct
+      const tripKey = queryKeys.reservations.byTrip(tripId);
+      const upcomingKey = queryKeys.reservations.upcoming;
+
+      queryClient.setQueryData<Reservation[]>(tripKey, (old) =>
+        (old ?? []).filter((r) => r.id !== id)
+      );
+      queryClient.setQueryData<Reservation[]>(upcomingKey, (old) =>
+        (old ?? []).filter((r) => r.id !== id)
+      );
     },
     onSettled: (_data, _err, { tripId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.reservations.byTrip(tripId) });

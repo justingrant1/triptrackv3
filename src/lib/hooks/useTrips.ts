@@ -209,6 +209,8 @@ export function useDeleteTrip() {
       await queryClient.cancelQueries({ queryKey: queryKeys.trips.all });
       await queryClient.cancelQueries({ queryKey: queryKeys.trips.upcoming });
       await queryClient.cancelQueries({ queryKey: queryKeys.trips.detail(tripId) });
+      await queryClient.cancelQueries({ queryKey: queryKeys.reservations.byTrip(tripId) });
+      await queryClient.cancelQueries({ queryKey: queryKeys.reservations.upcoming });
 
       const previousAll = queryClient.getQueryData<Trip[]>(queryKeys.trips.all);
       const previousUpcoming = queryClient.getQueryData<Trip[]>(queryKeys.trips.upcoming);
@@ -234,11 +236,39 @@ export function useDeleteTrip() {
       }
     },
     onSuccess: (tripId) => {
+      // Explicitly remove from all related caches to ensure persisted cache is correct
+      queryClient.setQueryData<Trip[]>(queryKeys.trips.all, (old) =>
+        (old ?? []).filter((trip) => trip.id !== tripId)
+      );
+      queryClient.setQueryData<Trip[]>(queryKeys.trips.upcoming, (old) =>
+        (old ?? []).filter((trip) => trip.id !== tripId)
+      );
+      
+      // Remove all reservations for this trip from caches
+      // (Supabase cascade-deletes them, so our cache should too)
+      queryClient.removeQueries({ queryKey: queryKeys.reservations.byTrip(tripId) });
+      queryClient.removeQueries({ queryKey: queryKeys.trips.detail(tripId) });
+      
+      // Also clean up any reservations from this trip in the upcoming cache
+      queryClient.setQueryData<any[]>(queryKeys.reservations.upcoming, (old) =>
+        (old ?? []).filter((r) => r.trip_id !== tripId)
+      );
+
       cancelRemindersForTrip(tripId).catch(console.error);
     },
-    onSettled: () => {
+    onSettled: async () => {
+      // Cancel any in-flight queries first — a stale refetch (e.g. from useFocusEffect)
+      // may still be pending with data that includes the deleted trip. We must cancel
+      // these before invalidating to prevent the stale response from overwriting our
+      // optimistic delete after invalidation triggers a fresh refetch.
+      await queryClient.cancelQueries({ queryKey: queryKeys.trips.all });
+      await queryClient.cancelQueries({ queryKey: queryKeys.trips.upcoming });
+      await queryClient.cancelQueries({ queryKey: queryKeys.reservations.upcoming });
+      
+      // Now safe to invalidate — fresh refetches will not include the deleted trip
       queryClient.invalidateQueries({ queryKey: queryKeys.trips.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.trips.upcoming });
+      queryClient.invalidateQueries({ queryKey: queryKeys.reservations.upcoming });
     },
   });
 }

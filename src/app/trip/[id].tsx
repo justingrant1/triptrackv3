@@ -1016,7 +1016,7 @@ function TripDetailScreenContent() {
     (a, b) => new Date(reservationsByDate[a][0].start_time).getTime() - new Date(reservationsByDate[b][0].start_time).getTime()
   );
 
-  // Travel-logical type priority for tiebreaking when times are close
+  // Travel-logical type priority: transportation always comes before destination
   const getTypePriority = (type: ReservationType): number => {
     const priorities: Record<ReservationType, number> = {
       flight: 1,   // You arrive/depart first
@@ -1027,6 +1027,11 @@ function TripDetailScreenContent() {
       meeting: 6,
     };
     return priorities[type] ?? 99;
+  };
+
+  // Helper: determine if a type is transportation (flight/train) vs destination (hotel/car/event)
+  const isTransportation = (type: ReservationType): boolean => {
+    return type === 'flight' || type === 'train';
   };
 
   // Create sections for SectionList with sticky headers
@@ -1041,9 +1046,18 @@ function TripDetailScreenContent() {
       : dateKey;
 
     // Smart sort within each day:
-    // 1. Primary: chronological by start_time
-    // 2. Tiebreaker: travel-logical type priority (flight → car → hotel)
+    // 1. Transportation (flights/trains) ALWAYS come before destination types (hotels/cars)
+    // 2. Within same category, sort chronologically
+    // 3. For items in same category with close times, use type priority as tiebreaker
     const sortedReservations = [...dateReservations].sort((a, b) => {
+      const isTransportA = isTransportation(a.type);
+      const isTransportB = isTransportation(b.type);
+
+      // Rule 1: Transportation always comes first
+      if (isTransportA && !isTransportB) return -1;
+      if (!isTransportA && isTransportB) return 1;
+
+      // Rule 2: Both in same category (both transport or both destination) — sort by time
       const timeA = new Date(a.start_time).getTime();
       const timeB = new Date(b.start_time).getTime();
       const timeDiff = timeA - timeB;
@@ -1054,7 +1068,7 @@ function TripDetailScreenContent() {
         return timeDiff;
       }
 
-      // Times are close or identical — use travel-logical type priority
+      // Rule 3: Times are close — use type priority as tiebreaker
       const priorityA = getTypePriority(a.type);
       const priorityB = getTypePriority(b.type);
       if (priorityA !== priorityB) {

@@ -391,7 +391,13 @@ export default function RootLayout() {
         // Max age for persisted cache: 24 hours
         maxAge: 1000 * 60 * 60 * 24,
         // Buster string — increment to invalidate old caches on app updates
-        buster: 'v2',
+        buster: 'v3',
+      }}
+      onSuccess={() => {
+        // After restoring cached data from AsyncStorage, immediately invalidate
+        // all queries to trigger background refetches. This ensures deleted items
+        // don't reappear from stale persisted cache.
+        queryClient.invalidateQueries();
       }}
     >
       <GestureHandlerRootView style={{ flex: 1 }}>

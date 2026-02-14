@@ -1876,20 +1876,26 @@ serve(async (req) => {
     // This replaces 50 individual DB queries with 1 query
     const allMessageIds = messages.map(m => m.id);
     let processedMessageIds = new Set<string>();
+    let batchDedupFailed = false;
+    
     if (allMessageIds.length > 0) {
       try {
-        const { data: processedRows } = await supabase
+        const { data: processedRows, error: batchError } = await supabase
           .from('processed_gmail_messages')
           .select('gmail_message_id')
           .eq('user_id', user.id)
           .in('gmail_message_id', allMessageIds);
         
-        if (processedRows) {
+        if (batchError) {
+          console.warn('Batch dedup query error:', batchError.message);
+          batchDedupFailed = true;
+        } else if (processedRows) {
           processedMessageIds = new Set(processedRows.map((r: any) => r.gmail_message_id));
+          console.log(`Batch dedup: ${processedMessageIds.size} of ${allMessageIds.length} already processed`);
         }
-        console.log(`Batch dedup: ${processedMessageIds.size} of ${allMessageIds.length} already processed`);
       } catch (err) {
-        console.warn('Batch dedup query failed, falling back to individual checks:', err);
+        console.warn('Batch dedup query failed, will check individually:', err);
+        batchDedupFailed = true;
       }
     }
 
@@ -1904,8 +1910,18 @@ serve(async (req) => {
       }
 
       try {
-        // Step 1: Check if already processed (using batch result)
-        if (processedMessageIds.has(message.id)) {
+        // Step 1: Check if already processed (using batch result or fallback)
+        let alreadyProcessed = false;
+        
+        if (batchDedupFailed) {
+          // Batch dedup failed — fall back to individual check
+          alreadyProcessed = await isMessageProcessed(supabase, user.id, message.id);
+        } else {
+          // Use batch result
+          alreadyProcessed = processedMessageIds.has(message.id);
+        }
+        
+        if (alreadyProcessed) {
           stats.skippedAlreadyProcessed++;
           continue;
         }

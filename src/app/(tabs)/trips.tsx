@@ -754,12 +754,19 @@ export default function TripsScreen() {
   const hasGmailConnected = (connectedAccounts ?? []).some((a: any) => a.provider === 'gmail');
 
   // Refetch trips when screen gains focus (e.g. returning from add/edit)
-  // Use refetchQueries with cancelRefetch:false so it won't interfere with
-  // in-flight mutations (like delete). Only refetches if data is stale.
+  // Guard against race conditions: don't refetch while mutations are in-flight
+  // to prevent stale server data from overwriting optimistic updates
   useFocusEffect(
     React.useCallback(() => {
       // Small delay to let any pending mutation settle first
       const timer = setTimeout(() => {
+        // Skip refetch if any mutations (delete, update) are currently running
+        // This prevents a stale GET response from overwriting the optimistic delete
+        if (queryClient.isMutating() > 0) {
+          console.log('[Trips] Skipping refetch — mutation in progress');
+          return;
+        }
+        
         queryClient.refetchQueries({
           queryKey: ['trips'],
           type: 'active',

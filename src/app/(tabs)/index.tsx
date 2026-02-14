@@ -75,8 +75,11 @@ function isReservationCancelled(reservation: Reservation): boolean {
  * Determine if a reservation is currently in progress (active/underway).
  * - Flights: in-flight (has departed but not landed)
  * - Other reservations: start time has passed but end time hasn't (e.g., hotel stay)
+ * 
+ * TRAVEL-AWARE: Hotels and car rentals should NOT be "in progress" if there's
+ * an active in-flight reservation — the traveler can't physically be using them yet.
  */
-function isInProgress(reservation: Reservation): boolean {
+function isInProgress(reservation: Reservation, allReservations: Reservation[]): boolean {
   const now = new Date();
 
   // Skip cancelled items
@@ -114,6 +117,23 @@ function isInProgress(reservation: Reservation): boolean {
   const hasStarted = startTime.getTime() < now.getTime();
   const hasEnded = endTime ? endTime.getTime() < now.getTime() : false;
 
+  // TRAVEL-AWARE: If there's an active in-flight reservation, hotels and car rentals
+  // can't be "in progress" yet — the traveler is still on the plane
+  if ((reservation.type === 'hotel' || reservation.type === 'car') && hasStarted && !hasEnded) {
+    const activeFlightInProgress = allReservations.some(r => 
+      r.type === 'flight' && r.id !== reservation.id && isInProgress(r, allReservations)
+    );
+    if (activeFlightInProgress) return false;
+  }
+
+  // Hotels: Use a longer grace period (6 hours) since check-in times are soft starts
+  // (check-in at 3 PM doesn't mean you're AT the hotel at 3:01 PM)
+  if (reservation.type === 'hotel' && hasStarted && !hasEnded) {
+    const hoursSinceCheckIn = (now.getTime() - startTime.getTime()) / 3600000;
+    // Only mark as "in progress" if check-in was >6 hours ago (likely actually checked in)
+    return hoursSinceCheckIn > 6;
+  }
+
   return hasStarted && !hasEnded;
 }
 
@@ -122,9 +142,12 @@ function isInProgress(reservation: Reservation): boolean {
  * Filters out things the user no longer needs to act on:
  * - Cancelled reservations
  * - Flights that have departed, are in-flight, or have landed
- * - Non-flight reservations whose start time is >30 min in the past
+ * - Reservations with type-specific grace periods (soft starts vs hard starts)
  *
  * The idea: "Next Up" = the next thing you need to physically do something about.
+ * 
+ * TRAVEL-AWARE: Hotels and car rentals have flexible pickup/check-in windows,
+ * so they stay actionable much longer than hard-start events like flights.
  */
 function isNextUpCandidate(reservation: Reservation): boolean {
   const now = new Date();
@@ -173,11 +196,35 @@ function isNextUpCandidate(reservation: Reservation): boolean {
     return true;
   }
 
-  // Non-flight reservations: skip if start time was >30 min ago
+  // Non-flight reservations: use type-specific grace periods
   // BUG FIX: Use timezone-aware start time
   const startTime = getReservationStartUTC(reservation);
   const minsSinceStart = (now.getTime() - startTime.getTime()) / 60000;
-  if (minsSinceStart > 30) return false;
+  
+  // Type-specific grace periods based on real-world travel patterns:
+  // - Hotels: 8 hours (check-in windows are typically 3 PM–11 PM)
+  // - Car rentals: 4 hours (pickup counters are flexible, but not all day)
+  // - Trains: 30 min (hard start time, like flights)
+  // - Events/Meetings: 30 min (hard start time)
+  switch (reservation.type) {
+    case 'hotel':
+      // Hotels have the longest grace period — check-in is available all evening
+      if (minsSinceStart > 480) return false; // 8 hours
+      break;
+    case 'car':
+      // Car rentals are flexible but not as much as hotels
+      if (minsSinceStart > 240) return false; // 4 hours
+      break;
+    case 'train':
+    case 'event':
+    case 'meeting':
+      // Hard start times — 30 min grace period
+      if (minsSinceStart > 30) return false;
+      break;
+    default:
+      // Default: 30 min grace period
+      if (minsSinceStart > 30) return false;
+  }
 
   return true;
 }
@@ -889,10 +936,10 @@ export default function TodayScreen() {
   const todayReservations = upcomingReservations.filter(r => isTodayISO(r.start_time));
   
   // Split today's reservations into categories
-  const inProgressItems = todayReservations.filter(r => isInProgress(r));
+  const inProgressItems = todayReservations.filter(r => isInProgress(r, upcomingReservations));
   // "Later today" = today's reservations minus nextUp and in-progress items
   const laterToday = todayReservations.filter(r => 
-    r.id !== nextUp?.id && !isInProgress(r)
+    r.id !== nextUp?.id && !isInProgress(r, upcomingReservations)
   );
   
   // Get upcoming reservations in next 48 hours (for "Coming Up" section)

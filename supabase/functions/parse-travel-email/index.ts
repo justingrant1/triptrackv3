@@ -49,6 +49,90 @@ function stripTimezoneOffset(isoString: string | null | undefined): string | nul
   return isoString.replace(/([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?)(Z|[+-]\d{2}:?\d{2})$/i, '$1');
 }
 
+/**
+ * Validate and correct invalid dates that AI might hallucinate.
+ * Handles cases like Feb 29 in non-leap years, Apr 31, etc.
+ * 
+ * Examples:
+ *   "2026-02-29" → "2026-02-28" (2026 is not a leap year)
+ *   "2026-04-31" → "2026-04-30" (April has 30 days)
+ *   "2026-02-29T12:00:00" → "2026-02-28T12:00:00"
+ */
+function validateAndCorrectDate(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+
+  try {
+    // Parse the date string
+    const parsed = new Date(dateStr);
+    
+    // Check if it's a valid date
+    if (isNaN(parsed.getTime())) {
+      console.warn(`[Date Validation] Invalid date: ${dateStr}`);
+      return null;
+    }
+
+    // Extract components from the original string
+    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})(T.*)?$/);
+    if (!match) {
+      // Not in expected format, return as-is if valid
+      return dateStr;
+    }
+
+    const [, yearStr, monthStr, dayStr, timePart] = match;
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const day = parseInt(dayStr, 10);
+
+    // Check if the parsed date matches the input components
+    // If not, the date was invalid (e.g., Feb 29 in non-leap year)
+    if (
+      parsed.getFullYear() !== year ||
+      parsed.getMonth() + 1 !== month ||
+      parsed.getDate() !== day
+    ) {
+      // Date rolled over - clamp to last valid day of the month
+      const lastDayOfMonth = new Date(year, month, 0).getDate();
+      const correctedDay = Math.min(day, lastDayOfMonth);
+      const corrected = `${yearStr}-${monthStr}-${correctedDay.toString().padStart(2, '0')}${timePart || ''}`;
+      console.warn(`[Date Validation] Corrected invalid date: ${dateStr} → ${corrected}`);
+      return corrected;
+    }
+
+    // Date is valid
+    return dateStr;
+  } catch (error) {
+    console.error(`[Date Validation] Error validating date: ${dateStr}`, error);
+    return null;
+  }
+}
+
+/**
+ * Validate and correct all dates in a parsed trip object.
+ */
+function validateParsedTripDates(parsed: ParsedTrip): ParsedTrip {
+  // Validate trip dates
+  const validatedStartDate = validateAndCorrectDate(parsed.start_date);
+  const validatedEndDate = validateAndCorrectDate(parsed.end_date);
+
+  if (!validatedStartDate || !validatedEndDate) {
+    throw new Error('Invalid trip dates after validation');
+  }
+
+  // Validate reservation dates
+  const validatedReservations = parsed.reservations.map((res) => ({
+    ...res,
+    start_time: validateAndCorrectDate(res.start_time) || res.start_time,
+    end_time: res.end_time ? validateAndCorrectDate(res.end_time) || res.end_time : res.end_time,
+  }));
+
+  return {
+    ...parsed,
+    start_date: validatedStartDate,
+    end_date: validatedEndDate,
+    reservations: validatedReservations,
+  };
+}
+
 async function parseEmailWithAI(emailText: string): Promise<ParsedTrip> {
   const prompt = `You are a travel email parser. Extract trip and reservation details from this confirmation email.
 
@@ -195,11 +279,27 @@ function areDestinationsRelated(
 }
 
 /**
+ * Check if a destination is unknown/generic (AI couldn't determine location).
+ */
+function isUnknownDestination(destination: string): boolean {
+  const normalized = destination.toLowerCase().trim();
+  const unknownPatterns = [
+    'unknown',
+    'not specified',
+    'n/a',
+    'tbd',
+    'to be determined',
+  ];
+  return unknownPatterns.some(pattern => normalized.includes(pattern));
+}
+
+/**
  * Find an existing trip that matches the destination and overlapping dates,
  * or create a new one. Uses tiered matching:
  * 
  * Tier 1: Exact destination + overlapping dates
  * Tier 2: Fuzzy destination (same region/country) + overlapping/adjacent dates (±3 day buffer)
+ * Tier 3: Unknown destination + overlapping dates → merge into the only matching trip
  */
 async function findOrCreateTripForEmail(
   supabase: any,
@@ -248,6 +348,17 @@ async function findOrCreateTripForEmail(
         return trip.id;
       }
     }
+  }
+
+  // === Tier 3: Unknown destination + overlapping dates → merge into the only matching trip ===
+  // If AI couldn't determine the destination (e.g., hotel email without clear location),
+  // and there's exactly ONE trip in the date range, merge into it.
+  // This handles cases like: flight to NYC on Feb 27 + hotel check-in on Feb 27 (unknown location)
+  if (isUnknownDestination(destination) && nearbyTrips && nearbyTrips.length === 1) {
+    const trip = nearbyTrips[0];
+    console.log(`[Tier 3] Unknown destination + single matching trip by date — using trip: ${trip.id} (${trip.name})`);
+    await expandTripDates(supabase, trip, start_date, end_date);
+    return trip.id;
   }
 
   // === No match found — create new trip ===
@@ -513,7 +624,10 @@ serve(async (req) => {
     console.log('Processing for user:', userId);
 
     // 2. Parse email with AI
-    const parsed = await parseEmailWithAI(emailText);
+    const parsedRaw = await parseEmailWithAI(emailText);
+    
+    // 2b. Validate and correct dates (handles AI hallucinations like Feb 29 in non-leap years)
+    const parsed = validateParsedTripDates(parsedRaw);
     console.log('Parsed trip:', parsed.trip_name);
 
     // 3. Find existing trip or create new one (smart matching)
