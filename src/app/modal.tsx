@@ -171,7 +171,7 @@ export default function ConciergeModal() {
                   </Text>
                 </Animated.View>
 
-                {/* Suggestions */}
+                {/* Initial Suggestions */}
                 <View className="space-y-3">
                   {SUGGESTIONS.map((suggestion, index) => (
                     <AnimatedPressable
@@ -251,18 +251,18 @@ export default function ConciergeModal() {
               </Pressable>
             )}
 
-            {/* AI-generated follow-up suggestion pills */}
-            {suggestions.length > 0 && !isLoading && (
+            {/* Suggestion pills - show AI-generated follow-ups OR initial suggestions */}
+            {!isLoading && (suggestions.length > 0 || messages.length > 0) && (
               <Animated.View entering={FadeInUp.duration(300)} className="mb-2">
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={{ paddingHorizontal: 0, gap: 8 }}
                 >
-                  {suggestions.map((suggestion, index) => (
+                  {(suggestions.length > 0 ? suggestions : SUGGESTIONS.map(s => s.text)).map((suggestion, index) => (
                     <Pressable
                       key={`suggestion-${index}`}
-                      onPress={() => handleSuggestion(suggestion)}
+                      onPress={() => handleSuggestion(typeof suggestion === 'string' ? suggestion : suggestion)}
                       disabled={isLoading}
                       style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}
                     >

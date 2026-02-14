@@ -42,7 +42,7 @@ import * as Linking from 'expo-linking';
 import { useUpcomingTrips } from '@/lib/hooks/useTrips';
 import { useUpcomingReservations } from '@/lib/hooks/useReservations';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatDate, formatDateFromISO, getCountdown, isToday, isTomorrow, isTodayISO, isTomorrowISO, getFlightAwareCountdown, getContextualTimeInfo, getFlightDepartureUTC, getReservationStartUTC } from '@/lib/utils';
+import { formatTime, formatDate, formatDateFromISO, getCountdown, isToday, isTomorrow, isTodayISO, isTomorrowISO, getFlightAwareCountdown, getContextualTimeInfo, getFlightDepartureUTC, getReservationStartUTC, parseDateOnly } from '@/lib/utils';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { useProfile } from '@/lib/hooks/useProfile';
 import { getWeatherIcon } from '@/lib/weather';
@@ -57,6 +57,7 @@ import type { FlightStatusData } from '@/lib/flight-status';
 import { useRefreshFlightStatus } from '@/lib/hooks/useFlightStatus';
 import { useResponsive } from '@/lib/hooks/useResponsive';
 import { ResponsiveContainer } from '@/components/ResponsiveContainer';
+import { updateTripStatuses } from '@/lib/trip-status';
 
 type ReservationType = Reservation['type'];
 
@@ -827,6 +828,11 @@ export default function TodayScreen() {
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
     try {
+      // Update trip statuses first (active → completed if end date passed)
+      if (user?.id) {
+        await updateTripStatuses(user.id).catch(() => {});
+      }
+
       // Refresh flight status from the API for all trips with flights
       const flightRefreshPromises = tripIdsWithFlights.map(tripId =>
         refreshFlightStatus.mutateAsync(tripId).catch(err => {
@@ -860,9 +866,18 @@ export default function TodayScreen() {
       }
     }
     setRefreshing(false);
-  }, [refetchTrips, refetchReservations, tripIdsWithFlights, refreshFlightStatus]);
+  }, [refetchTrips, refetchReservations, tripIdsWithFlights, refreshFlightStatus, user]);
 
-  const activeTrip = upcomingTrips.find(t => t.status === 'active');
+  // Find the active trip with client-side date guard to prevent stale data
+  const activeTrip = upcomingTrips.find(t => {
+    if (t.status !== 'active') return false;
+    // Client-side guard: make sure the trip hasn't ended
+    const endDate = parseDateOnly(t.end_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+    return endDate >= today;
+  });
   
   // Smart "Next Up" — only show reservations the user still needs to act on
   // Skips: cancelled, departed, in-flight, landed flights, and past events

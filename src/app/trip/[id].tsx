@@ -1016,6 +1016,19 @@ function TripDetailScreenContent() {
     (a, b) => new Date(reservationsByDate[a][0].start_time).getTime() - new Date(reservationsByDate[b][0].start_time).getTime()
   );
 
+  // Travel-logical type priority for tiebreaking when times are close
+  const getTypePriority = (type: ReservationType): number => {
+    const priorities: Record<ReservationType, number> = {
+      flight: 1,   // You arrive/depart first
+      train: 2,    // Transit
+      car: 3,      // Pick up rental after arriving
+      hotel: 4,    // Check in last
+      event: 5,
+      meeting: 6,
+    };
+    return priorities[type] ?? 99;
+  };
+
   // Create sections for SectionList with sticky headers
   const sections = sortedDates.map((dateKey) => {
     const dateReservations = reservationsByDate[dateKey];
@@ -1027,9 +1040,34 @@ function TripDetailScreenContent() {
       ? 'Tomorrow'
       : dateKey;
 
+    // Smart sort within each day:
+    // 1. Primary: chronological by start_time
+    // 2. Tiebreaker: travel-logical type priority (flight → car → hotel)
+    const sortedReservations = [...dateReservations].sort((a, b) => {
+      const timeA = new Date(a.start_time).getTime();
+      const timeB = new Date(b.start_time).getTime();
+      const timeDiff = timeA - timeB;
+
+      // If times are more than 2 hours apart, use strict chronological order
+      const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+      if (Math.abs(timeDiff) > TWO_HOURS_MS) {
+        return timeDiff;
+      }
+
+      // Times are close or identical — use travel-logical type priority
+      const priorityA = getTypePriority(a.type);
+      const priorityB = getTypePriority(b.type);
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+
+      // Same type and close times — fall back to chronological
+      return timeDiff;
+    });
+
     return {
       title: dateLabel,
-      data: dateReservations,
+      data: sortedReservations,
     };
   });
 

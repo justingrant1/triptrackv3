@@ -296,6 +296,124 @@ async function expandTripDates(
   }
 }
 
+/**
+ * Check if a reservation already exists (duplicate detection).
+ * Uses multiple strategies to catch duplicates from different emails
+ * about the same booking (confirmation, check-in, boarding pass, etc.).
+ * 
+ * Ported from scan-gmail to ensure both ingestion paths have the same dedup logic.
+ */
+async function isDuplicateReservation(
+  supabase: any,
+  tripId: string,
+  reservation: ParsedReservation
+): Promise<boolean> {
+  // Check 1: Same type + same start_time in same trip (most precise)
+  if (reservation.start_time) {
+    const { data: byTypeAndTime } = await supabase
+      .from('reservations')
+      .select('id')
+      .eq('trip_id', tripId)
+      .eq('type', reservation.type)
+      .eq('start_time', reservation.start_time)
+      .maybeSingle();
+
+    if (byTypeAndTime) {
+      console.log(`[Dedup] Found duplicate by type+time: ${reservation.title}`);
+      return true;
+    }
+  }
+
+  // Check 2: FLIGHT-SPECIFIC — same flight number in same trip
+  // This is the key dedup check: booking confirmation, check-in email,
+  // and boarding pass all reference the same flight number (e.g., "AA 1531")
+  // but may report slightly different times.
+  if (reservation.type === 'flight') {
+    const flightNumber = reservation.details?.['Flight Number'];
+    if (flightNumber) {
+      // Normalize flight number: strip spaces, uppercase (e.g., "AA 1531" → "AA1531")
+      const normalizedFlightNum = flightNumber.toString().replace(/\s+/g, '').toUpperCase();
+
+      // Get all flight reservations in this trip
+      const { data: existingFlights } = await supabase
+        .from('reservations')
+        .select('id, details, start_time')
+        .eq('trip_id', tripId)
+        .eq('type', 'flight');
+
+      if (existingFlights && existingFlights.length > 0) {
+        for (const existing of existingFlights) {
+          const existingFlightNum = existing.details?.['Flight Number'];
+          if (existingFlightNum) {
+            const normalizedExisting = existingFlightNum.toString().replace(/\s+/g, '').toUpperCase();
+            if (normalizedFlightNum === normalizedExisting) {
+              console.log(`[Dedup] Found duplicate flight by flight number: ${flightNumber} (existing: ${existing.id})`);
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    // Check 2b: FLIGHT fuzzy match — same route on same day
+    // Catches cases where flight number is missing or formatted differently
+    // by comparing departure/arrival airports + same calendar day
+    if (reservation.start_time && reservation.details) {
+      const depAirport = reservation.details['Departure Airport'];
+      const arrAirport = reservation.details['Arrival Airport'];
+
+      if (depAirport && arrAirport) {
+        const parsedDate = new Date(reservation.start_time);
+        const dayStart = new Date(parsedDate);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(parsedDate);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const { data: sameDayFlights } = await supabase
+          .from('reservations')
+          .select('id, details, start_time')
+          .eq('trip_id', tripId)
+          .eq('type', 'flight')
+          .gte('start_time', dayStart.toISOString())
+          .lte('start_time', dayEnd.toISOString());
+
+        if (sameDayFlights && sameDayFlights.length > 0) {
+          const normalizedDep = depAirport.toString().toUpperCase().trim();
+          const normalizedArr = arrAirport.toString().toUpperCase().trim();
+
+          for (const existing of sameDayFlights) {
+            const existingDep = existing.details?.['Departure Airport']?.toString().toUpperCase().trim();
+            const existingArr = existing.details?.['Arrival Airport']?.toString().toUpperCase().trim();
+
+            if (existingDep === normalizedDep && existingArr === normalizedArr) {
+              console.log(`[Dedup] Found duplicate flight by route+date: ${depAirport}→${arrAirport} on ${parsedDate.toDateString()} (existing: ${existing.id})`);
+              return true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Check 3: Same confirmation number (for non-flight types)
+  // For flights, we skip this since multiple legs share the same confirmation
+  if (reservation.confirmation_number && reservation.type !== 'flight') {
+    const { data: byConfirmation } = await supabase
+      .from('reservations')
+      .select('id')
+      .eq('trip_id', tripId)
+      .eq('confirmation_number', reservation.confirmation_number)
+      .maybeSingle();
+
+    if (byConfirmation) {
+      console.log(`[Dedup] Found duplicate by confirmation number: ${reservation.confirmation_number}`);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 serve(async (req) => {
   try {
     // CORS headers
@@ -407,9 +525,10 @@ serve(async (req) => {
 
     console.log('Using trip:', tripId);
 
-    // 4. Create all reservations (handle cancellations by updating existing)
-    const reservationsToInsert: any[] = [];
+    // 4. Create all reservations (handle cancellations by updating existing + dedup check)
+    let reservationsCreated = 0;
     let cancellationsUpdated = 0;
+    let duplicatesSkipped = 0;
 
     for (const res of parsed.reservations) {
       const reservationStatus = res.status === 'cancelled' ? 'cancelled' : 'confirmed';
@@ -434,35 +553,44 @@ serve(async (req) => {
         }
       }
 
-      reservationsToInsert.push({
-        trip_id: tripId,
-        type: res.type,
-        title: res.title,
-        subtitle: res.subtitle || null,
-        start_time: stripTimezoneOffset(res.start_time) || res.start_time,
-        end_time: stripTimezoneOffset(res.end_time) || res.end_time || null,
-        location: res.location || null,
-        address: res.address || null,
-        confirmation_number: res.confirmation_number || null,
-        details: res.details || {},
-        status: reservationStatus,
-        alert_message: null,
-      });
-    }
-
-    if (reservationsToInsert.length > 0) {
-      const { error: reservationsError } = await supabase
-        .from('reservations')
-        .insert(reservationsToInsert);
-
-      if (reservationsError) {
-        throw new Error(`Failed to create reservations: ${reservationsError.message}`);
+      // Check for duplicates BEFORE inserting
+      const isDuplicate = await isDuplicateReservation(supabase, tripId, res);
+      if (isDuplicate) {
+        console.log(`[Dedup] Skipping duplicate reservation: ${res.title}`);
+        duplicatesSkipped++;
+        continue;
       }
+
+      // Insert the reservation
+      const { error: insertError } = await supabase
+        .from('reservations')
+        .insert({
+          trip_id: tripId,
+          type: res.type,
+          title: res.title,
+          subtitle: res.subtitle || null,
+          start_time: stripTimezoneOffset(res.start_time) || res.start_time,
+          end_time: stripTimezoneOffset(res.end_time) || res.end_time || null,
+          location: res.location || null,
+          address: res.address || null,
+          confirmation_number: res.confirmation_number || null,
+          details: res.details || {},
+          status: reservationStatus,
+          alert_message: null,
+        });
+
+      if (insertError) {
+        console.error(`Failed to insert reservation: ${res.title}`, insertError);
+        throw new Error(`Failed to create reservation: ${insertError.message}`);
+      }
+
+      reservationsCreated++;
+      console.log(`Created reservation: ${res.title}`);
     }
 
-    const totalProcessed = reservationsToInsert.length + cancellationsUpdated;
+    const totalProcessed = reservationsCreated + cancellationsUpdated;
 
-    console.log(`Processed ${totalProcessed} reservations (${reservationsToInsert.length} created, ${cancellationsUpdated} cancellations updated)`);
+    console.log(`Processed ${totalProcessed} reservations (${reservationsCreated} created, ${cancellationsUpdated} cancellations updated, ${duplicatesSkipped} duplicates skipped)`);
 
     // 4b. If cancellations were processed, check if ALL reservations in the trip are now cancelled.
     //     If so, mark the trip as 'completed' so it moves to Past Trips.

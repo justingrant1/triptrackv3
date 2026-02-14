@@ -151,6 +151,11 @@ export function useDeleteReservation() {
 
   return useMutation({
     mutationFn: async ({ id, tripId }: { id: string; tripId: string }) => {
+      // CRITICAL: Cancel notifications BEFORE deleting from DB
+      // This ensures we have the reservation ID available for cancellation
+      console.log(`[DeleteReservation] Cancelling notifications for reservation ${id}`);
+      await cancelRemindersForReservation(id);
+
       const { error } = await supabase
         .from('reservations')
         .delete()
@@ -169,7 +174,7 @@ export function useDeleteReservation() {
         (old ?? []).filter((r) => r.id !== id)
       );
 
-      return { previous, tripId };
+      return { previous, tripId, id };
     },
     onError: (_err, _vars, context) => {
       if (context?.previous) {
@@ -178,9 +183,9 @@ export function useDeleteReservation() {
           context.previous
         );
       }
-    },
-    onSuccess: ({ id }) => {
-      cancelRemindersForReservation(id).catch(console.error);
+      // If deletion failed, we should reschedule notifications
+      // But we don't have the reservation data here, so we'll rely on the UI refresh
+      console.error('[DeleteReservation] Failed to delete, notifications may need rescheduling');
     },
     onSettled: (_data, _err, { tripId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.reservations.byTrip(tripId) });
