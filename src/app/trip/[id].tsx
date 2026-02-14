@@ -41,7 +41,7 @@ import { useTrip, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservations, useDeleteReservation } from '@/lib/hooks/useReservations';
 import { useTripExpenses } from '@/lib/hooks/useReceipts';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatTimeFromISO, formatDate, formatDateLong, formatCurrency, isToday, isTomorrow, getLiveStatus, LiveStatus, getFlightDuration, parseDateOnly } from '@/lib/utils';
+import { formatTime, formatTimeFromISO, formatDate, formatDateLong, formatDateFromISO, formatCurrency, isToday, isTomorrow, isTodayISO, isTomorrowISO, getLiveStatus, LiveStatus, getFlightDuration, parseDateOnly, getContextualTimeInfo, getFlightDepartureUTC, getReservationEndUTC } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { shareTripNative } from '@/lib/sharing';
@@ -65,15 +65,24 @@ function getFlightLiveStatus(status: FlightStatusData): LiveStatus {
         return { label: `Delayed ${delayMins}m`, color: 'amber', pulse: false };
       }
       // Check if boarding window (within 30 min of departure)
-      if (status.dep_scheduled || status.dep_estimated) {
-        const depTime = new Date(status.dep_estimated || status.dep_scheduled!).getTime();
-        const minsUntil = (depTime - Date.now()) / (1000 * 60);
-        if (minsUntil <= 30 && minsUntil > 0) {
-          return { label: 'Boarding', color: 'blue', pulse: true };
-        }
-        if (minsUntil <= 0) {
-          // Departure time passed but no dep_actual — likely boarding/taxiing
-          return { label: 'Boarding', color: 'blue', pulse: true };
+      // CRITICAL: Use dep_scheduled_utc (real UTC time) for accurate comparison
+      if (status.dep_scheduled_utc) {
+        // Force UTC interpretation by appending 'Z' if missing
+        const utcSafe = status.dep_scheduled_utc.match(/[Zz]$|[+-]\d{2}:?\d{2}$/)
+          ? status.dep_scheduled_utc
+          : status.dep_scheduled_utc.replace(' ', 'T') + 'Z';
+        const depUtcMs = new Date(utcSafe).getTime();
+        if (!isNaN(depUtcMs)) {
+          const delayMs = (status.dep_delay ?? 0) * 60 * 1000;
+          const actualDepMs = depUtcMs + delayMs;
+          const minsUntil = (actualDepMs - Date.now()) / (1000 * 60);
+          if (minsUntil <= 30 && minsUntil > 0) {
+            return { label: 'Boarding', color: 'blue', pulse: true };
+          }
+          if (minsUntil <= 0) {
+            // Departure time passed but no dep_actual — likely boarding/taxiing
+            return { label: 'Boarding', color: 'blue', pulse: true };
+          }
         }
       }
       return { label: 'On Time', color: 'green', pulse: false };
@@ -581,7 +590,13 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
   const flightStatusData = reservation.type === 'flight' ? getStoredFlightStatus(reservation) : null;
   const liveStatus: LiveStatus | null = flightStatusData
     ? getFlightLiveStatus(flightStatusData)
-    : getLiveStatus(reservation.type, new Date(reservation.start_time), reservation.end_time ? new Date(reservation.end_time) : undefined, reservation.status);
+    : getLiveStatus(
+        reservation.type,
+        // BUG FIX: Use timezone-aware start time for flights, device-local for others
+        reservation.type === 'flight' ? getFlightDepartureUTC(reservation) : new Date(reservation.start_time),
+        reservation.end_time ? (reservation.type === 'flight' ? getReservationEndUTC(reservation) ?? undefined : new Date(reservation.end_time)) : undefined,
+        reservation.status
+      );
 
   const handleCopyConfirmation = async () => {
     if (reservation.confirmation_number) {
@@ -748,7 +763,12 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
                   <Text className="text-slate-500 text-xs ml-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                     {reservation.type === 'flight' || reservation.type === 'train'
                       ? (() => {
-                          const depTime = formatTimeFromISO(reservation.start_time);
+                          // For flights with live API data, prefer the API's local airport time
+                          // over the stored reservation time (which may have timezone issues)
+                          const contextInfo = reservation.type === 'flight' && flightStatusData
+                            ? getContextualTimeInfo(reservation, flightStatusData)
+                            : null;
+                          const depTime = contextInfo?.time || formatTimeFromISO(reservation.start_time);
                           const flightDur = getFlightDuration(reservation);
                           if (flightDur) {
                             return `${depTime} · ${flightDur}`;
@@ -983,7 +1003,8 @@ function TripDetailScreenContent() {
 
   // Group reservations by date
   const reservationsByDate = reservations.reduce((acc: Record<string, Reservation[]>, res: Reservation) => {
-    const dateKey = formatDateLong(new Date(res.start_time));
+    // BUG FIX: Use formatDateFromISO to avoid timezone conversion
+    const dateKey = formatDateLong(new Date(res.start_time.match(/^(\d{4})-(\d{2})-(\d{2})/)![0] + 'T12:00:00'));
     if (!acc[dateKey]) {
       acc[dateKey] = [];
     }
@@ -999,9 +1020,10 @@ function TripDetailScreenContent() {
   const sections = sortedDates.map((dateKey) => {
     const dateReservations = reservationsByDate[dateKey];
     const firstRes = dateReservations[0];
-    const dateLabel = isToday(new Date(firstRes.start_time))
+    // BUG FIX: Use isTodayISO/isTomorrowISO to avoid timezone conversion
+    const dateLabel = isTodayISO(firstRes.start_time)
       ? 'Today'
-      : isTomorrow(new Date(firstRes.start_time))
+      : isTomorrowISO(firstRes.start_time)
       ? 'Tomorrow'
       : dateKey;
 

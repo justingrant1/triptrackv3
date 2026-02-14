@@ -9,5 +9,8 @@ verify_jwt = false
 [functions.parse-travel-email]
 verify_jwt = false
 
+[functions.ai-receipt-scan]
+verify_jwt = false
+
 [functions.scan-gmail]
 verify_jwt = false

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator, Image, Keyboard, TouchableWithoutFeedback } from 'react-native';
+import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Alert, ActivityIndicator, Image, Keyboard, TouchableWithoutFeedback, Linking } from 'react-native';
 import { isAppleSignInAvailable } from '@/lib/apple-auth';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -436,9 +436,25 @@ export default function LoginScreen() {
             >
               <Text className="text-white/30 text-xs text-center leading-5 max-w-[280px]">
                 By continuing, you agree to our{' '}
-                <Text className="text-white/50">Terms of Service</Text>
+                <Text 
+                  className="text-white/50 underline"
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    Linking.openURL('https://triptrack.ai/terms');
+                  }}
+                >
+                  Terms of Service
+                </Text>
                 {' '}and{' '}
-                <Text className="text-white/50">Privacy Policy</Text>
+                <Text 
+                  className="text-white/50 underline"
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    Linking.openURL('https://triptrack.ai/privacy');
+                  }}
+                >
+                  Privacy Policy
+                </Text>
               </Text>
             </Animated.View>
           </View>

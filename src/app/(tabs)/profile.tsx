@@ -47,6 +47,8 @@ import { useSubscription } from '@/lib/hooks/useSubscription';
 import { Alert, Image } from 'react-native';
 import { deleteAccount } from '@/lib/auth';
 import { parseDateOnly } from '@/lib/utils';
+import { useResponsive } from '@/lib/hooks/useResponsive';
+import { ResponsiveContainer } from '@/components/ResponsiveContainer';
 
 // Dynamic version from app config
 const appVersion = Constants.expoConfig?.version || '1.0.0';
@@ -130,6 +132,7 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing] = React.useState(false);
   const [showHowItWorks, setShowHowItWorks] = React.useState(false);
   const copyScale = useSharedValue(1);
+  const responsive = useResponsive();
   
   const connectedCount = connectedAccounts?.length || 0;
 
@@ -292,6 +295,7 @@ export default function ProfileScreen() {
             />
           }
         >
+          <ResponsiveContainer>
           {/* Header */}
           <Animated.View
             entering={FadeInDown.duration(500)}
@@ -381,7 +385,7 @@ export default function ProfileScreen() {
                 </Text>
                 <View className="flex-row flex-wrap">
                   {/* Total Trips */}
-                  <View className="w-1/2 mb-4 pr-2">
+                  <View style={{ width: `${100 / responsive.statsColumns}%`, paddingRight: 8 }} className="mb-4">
                     <View className="flex-row items-center mb-1">
                       <View className="bg-blue-500/15 p-1.5 rounded-lg mr-2">
                         <Plane size={14} color="#3B82F6" />
@@ -396,7 +400,7 @@ export default function ProfileScreen() {
                   </View>
 
                   {/* Destinations */}
-                  <View className="w-1/2 mb-4 pl-2">
+                  <View style={{ width: `${100 / responsive.statsColumns}%`, paddingLeft: 8 }} className="mb-4">
                     <View className="flex-row items-center mb-1">
                       <View className="bg-emerald-500/15 p-1.5 rounded-lg mr-2">
                         <Globe size={14} color="#10B981" />
@@ -411,7 +415,7 @@ export default function ProfileScreen() {
                   </View>
 
                   {/* Days Traveling */}
-                  <View className="w-1/2 pr-2">
+                  <View style={{ width: `${100 / responsive.statsColumns}%`, paddingRight: 8 }}>
                     <View className="flex-row items-center mb-1">
                       <View className="bg-purple-500/15 p-1.5 rounded-lg mr-2">
                         <CalendarDays size={14} color="#A855F7" />
@@ -427,7 +431,7 @@ export default function ProfileScreen() {
 
                   {/* Total Spend */}
                   {travelStats.totalSpend > 0 && (
-                    <View className="w-1/2 pl-2">
+                    <View style={{ width: `${100 / responsive.statsColumns}%`, paddingLeft: 8 }}>
                       <View className="flex-row items-center mb-1">
                         <View className="bg-amber-500/15 p-1.5 rounded-lg mr-2">
                           <DollarSign size={14} color="#F59E0B" />
@@ -656,9 +660,17 @@ export default function ProfileScreen() {
               <MenuItem
                 icon={<Shield size={18} color="#10B981" />}
                 iconColor="#10B981"
+                label="Terms of Service"
+                onPress={() => Linking.openURL('https://triptrack.ai/terms')}
+                index={8}
+                trailing={<ExternalLink size={16} color="#64748B" />}
+              />
+              <MenuItem
+                icon={<Shield size={18} color="#10B981" />}
+                iconColor="#10B981"
                 label="Privacy Policy"
                 onPress={() => Linking.openURL('https://triptrack.ai/privacy')}
-                index={8}
+                index={9}
                 trailing={<ExternalLink size={16} color="#64748B" />}
                 isLast
               />
@@ -701,6 +713,7 @@ export default function ProfileScreen() {
               TripTrack v{appVersion} ({buildNumber})
             </Text>
           </View>
+          </ResponsiveContainer>
         </ScrollView>
       </SafeAreaView>
     </View>

@@ -281,6 +281,7 @@ export default function ReceiptsScreen() {
   const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
   const [upgradeReason, setUpgradeReason] = React.useState<'csv-export' | 'email-receipts'>('csv-export');
   const [isScanning, setIsScanning] = React.useState(false);
+  const [scanningStatus, setScanningStatus] = React.useState<string>('');
   const [scanResult, setScanResult] = React.useState<{ receiptsFound: number; totalAmount: number } | null>(null);
 
   const { canExportCSV, isPro } = useSubscription();
@@ -450,9 +451,11 @@ export default function ReceiptsScreen() {
 
     try {
       const result = await scanEmailReceipts.mutateAsync(gmailAccount.id);
+      console.log('[Receipt Scan] Result:', JSON.stringify(result, null, 2));
       const summary = result?.summary;
 
       if (summary) {
+        console.log('[Receipt Scan] Summary:', JSON.stringify(summary, null, 2));
         setScanResult({
           receiptsFound: summary.receiptsCreated || 0,
           totalAmount: summary.totalAmount || 0,

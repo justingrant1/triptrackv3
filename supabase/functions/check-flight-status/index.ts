@@ -92,6 +92,7 @@ function normalizeAirLabsStatus(rawStatus: string | null | undefined, flightIata
   const statusMap: Record<string, string> = {
     // Direct matches
     "scheduled": "scheduled",
+    "boarding": "boarding",   // preserve boarding status from airline
     "active": "active",
     "landed": "landed",
     "cancelled": "cancelled",
@@ -109,7 +110,6 @@ function normalizeAirLabsStatus(rawStatus: string | null | undefined, flightIata
     "started": "active",
     "departed": "active",
     "taxiing": "active",
-    "boarding": "scheduled",  // still on ground
     "gate": "scheduled",
     "check-in": "scheduled",
     "delayed": "scheduled",   // delayed is still scheduled phase
@@ -455,42 +455,52 @@ function isWithinTrackableWindow(reservation: Reservation): boolean {
 }
 
 /**
- * Validate that AirLabs returned data for the CORRECT flight instance.
- * Uses dep_scheduled_utc (UTC) for comparison against reservation start_time (UTC).
+ * Validate that AirLabs returned data for the CORRECT flight date.
+ *
+ * AirLabs returns the current/most-recent instance of a flight number.
+ * For daily flights (e.g. AA27), this could be yesterday's instance.
+ *
+ * We compare the CALENDAR DATE (not exact time) of:
+ *   - API's dep_scheduled (LOCAL airport time, e.g. "2026-02-11 10:15")
+ *   - Reservation's start_time (also local time, possibly stored as UTC)
+ *
+ * Both represent local departure times, so comparing dates is apples-to-apples.
+ * We allow ±1 calendar day tolerance for timezone edge cases (e.g. a flight
+ * at 11 PM that crosses midnight in UTC, or delayed flights crossing midnight).
+ *
  * dep_scheduled is the ORIGINAL scheduled time — it does NOT change with delays,
  * so even a 6-hour delay won't cause a false mismatch.
- *
- * IMPORTANT: AirLabs returns dep_time in LOCAL airport time (no timezone info),
- * but dep_time_utc in UTC. We must use the UTC version for comparison because
- * reservation.start_time is stored in UTC. Comparing local vs UTC would cause
- * false rejections for flights in non-UTC timezones.
- *
- * Same flight number can run morning + evening, or daily. If the scheduled
- * departure times differ by more than 3 hours, it's the wrong instance.
  */
-function isCorrectFlightInstance(
+function isCorrectFlightDate(
   apiStatus: FlightStatusData,
   reservation: Reservation
 ): boolean {
-  // Prefer UTC time for apples-to-apples comparison with reservation (also UTC)
-  const apiDepTimeStr = apiStatus.dep_scheduled_utc || apiStatus.dep_scheduled;
+  // Use LOCAL dep_scheduled (not UTC) because reservation.start_time
+  // is typically local airport time (possibly stored without proper offset).
+  // Comparing local-to-local dates avoids UTC offset mismatches.
+  const apiDepTimeStr = apiStatus.dep_scheduled;
 
   if (!apiDepTimeStr) {
     // No scheduled time from API — can't validate, allow it
-    // (better to show potentially wrong data than block everything)
     return true;
   }
 
-  const apiDepTime = new Date(apiDepTimeStr).getTime();
-  const reservationDepTime = new Date(reservation.start_time).getTime();
-  const diffHours = Math.abs(apiDepTime - reservationDepTime) / (1000 * 60 * 60);
+  // Extract just the date portion (YYYY-MM-DD) from both
+  // API dep_scheduled is like "2026-02-11 10:15" or "2026-02-11T10:15:00"
+  const apiDateStr = apiDepTimeStr.substring(0, 10); // "2026-02-11"
+  // Reservation start_time is like "2026-02-12T10:10:00+00:00"
+  const resDateStr = reservation.start_time.substring(0, 10); // "2026-02-12"
 
-  if (diffHours > 3) {
+  // Parse as simple dates (no timezone conversion)
+  const apiDate = new Date(apiDateStr + "T00:00:00Z").getTime();
+  const resDate = new Date(resDateStr + "T00:00:00Z").getTime();
+  const diffDays = Math.abs(apiDate - resDate) / (1000 * 60 * 60 * 24);
+
+  if (diffDays > 1) {
     console.log(
       `[Flight Guard] Rejecting ${apiStatus.flight_iata} data: ` +
-      `API dep_scheduled_utc=${apiStatus.dep_scheduled_utc} (local=${apiStatus.dep_scheduled}) ` +
-      `vs reservation start_time=${reservation.start_time} ` +
-      `(${diffHours.toFixed(1)}h difference — likely wrong flight instance)`
+      `API dep_scheduled date=${apiDateStr} vs reservation date=${resDateStr} ` +
+      `(${diffDays} day(s) apart — wrong flight instance)`
     );
     return false;
   }
@@ -552,17 +562,51 @@ async function processReservation(
     };
   }
 
-  // ── Layer 2: Log API departure time for debugging ────────────────
-  // The trackable window + flight number match + AirLabs returning the
-  // current instance is sufficient. No need to reject based on time
-  // comparison — reservation.start_time may be local-time-as-UTC or
-  // have date boundary issues that cause false rejections.
+  // ── Layer 2: Date guard — reject wrong-date flight instances ─────
+  // AirLabs returns the current/most-recent instance. For daily flights
+  // (e.g. AA27), this could be yesterday's already-landed flight.
+  // Compare calendar dates (local-to-local) to catch this.
   if (newStatus.dep_scheduled_utc || newStatus.dep_scheduled) {
     console.log(
       `[Flight Match] ${newStatus.flight_iata}: ` +
       `API dep_utc=${newStatus.dep_scheduled_utc} local=${newStatus.dep_scheduled}, ` +
       `reservation start=${reservation.start_time}`
     );
+  }
+
+  if (!isCorrectFlightDate(newStatus, reservation)) {
+    // Wrong date — don't store this data, and clear any stale data
+    // that may have been stored from a previous wrong-date fetch
+    const existingStatus = reservation.details?._flight_status;
+    if (existingStatus) {
+      // Check if the existing stored data is also wrong-date
+      const storedDepStr = existingStatus.dep_scheduled;
+      if (storedDepStr) {
+        const storedDate = storedDepStr.substring(0, 10);
+        const resDate = reservation.start_time.substring(0, 10);
+        const storedDateMs = new Date(storedDate + "T00:00:00Z").getTime();
+        const resDateMs = new Date(resDate + "T00:00:00Z").getTime();
+        const diffDays = Math.abs(storedDateMs - resDateMs) / (1000 * 60 * 60 * 24);
+        if (diffDays > 1) {
+          console.log(`[Flight Guard] Clearing stale wrong-date data for ${flightIata}`);
+          const cleanedDetails = { ...reservation.details };
+          delete cleanedDetails._flight_status;
+          delete cleanedDetails._previous_flight_status;
+          await supabase
+            .from("reservations")
+            .update({ details: cleanedDetails, status: "confirmed", alert_message: null })
+            .eq("id", reservation.id);
+        }
+      }
+    }
+
+    return {
+      reservation_id: reservation.id,
+      flight_iata: flightIata,
+      status: null,
+      changes: [],
+      error: null, // Not an error — just wrong date instance from API
+    };
   }
 
   // Get previous status for change detection
@@ -697,10 +741,39 @@ async function createNotificationsForChanges(
       });
 
     if (notifications.length > 0) {
-      // Always insert into notifications table (for the inbox)
+      // ── Deduplication: Check for recent identical notifications ──────────
+      // Prevents duplicate notifications when multiple sources (Today tab,
+      // trip detail page, cron) call check-flight-status simultaneously
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      
+      const dedupedNotifications = [];
+      for (const notif of notifications) {
+        // Check if this exact notification was already created recently
+        const { data: existing } = await supabase
+          .from("notifications")
+          .select("id")
+          .eq("user_id", notif.user_id)
+          .eq("trip_id", notif.trip_id)
+          .eq("title", notif.title)
+          .gte("created_at", fiveMinutesAgo)
+          .maybeSingle();
+
+        if (existing) {
+          console.log(`[Dedup] Skipping duplicate notification: "${notif.title}"`);
+        } else {
+          dedupedNotifications.push(notif);
+        }
+      }
+
+      if (dedupedNotifications.length === 0) {
+        console.log("[Dedup] All notifications were duplicates — skipping");
+        return;
+      }
+
+      // Insert only non-duplicate notifications
       const { error } = await supabase
         .from("notifications")
-        .insert(notifications);
+        .insert(dedupedNotifications);
 
       if (error) {
         console.error("Failed to create notifications:", error);

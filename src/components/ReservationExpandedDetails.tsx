@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatTimeFromISO, formatDate, getFlightDuration } from '@/lib/utils';
+import { formatTime, formatTimeFromISO, formatDate, getFlightDuration, getContextualTimeInfo } from '@/lib/utils';
 import { FlightStatusBar } from '@/components/FlightStatusBar';
 import { getStoredFlightStatus } from '@/lib/flight-status';
 import { getBoardingPassFromReservation } from '@/lib/boarding-pass';
@@ -64,8 +64,13 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
     const arrAirport = d['Arrival Airport'] || d['To'] || null;
     const depCode = extractAirportCode(depAirport) || extractAirportCode(reservation.title);
     const arrCode = extractAirportCode(arrAirport) || extractAirportCode(reservation.title);
-    // Use formatTimeFromISO to preserve local departure/arrival times (avoids timezone conversion)
-    const depTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
+    // Always get live flight status for detail rows (gate, terminal, etc.)
+    const liveFlightStatus = getStoredFlightStatus(reservation);
+
+    // For departure time, prefer live API data (local airport time from AirLabs)
+    // over stored reservation time which may have timezone storage issues.
+    const contextInfo = liveFlightStatus ? getContextualTimeInfo(reservation, liveFlightStatus) : null;
+    const depTime = contextInfo?.time || (reservation.start_time ? formatTimeFromISO(reservation.start_time) : null);
     const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
 
     // Use timezone-aware duration calculation (handles cross-timezone flights correctly)
@@ -74,9 +79,6 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
     // Clean airport names (remove code if we extracted it)
     const depName = depAirport?.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-–]\s*/, '') || null;
     const arrName = arrAirport?.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-–]\s*/, '') || null;
-
-    // Always get live flight status for detail rows (gate, terminal, etc.)
-    const liveFlightStatus = getStoredFlightStatus(reservation);
     // Only show the FlightStatusBar component if requested
     const showFlightStatusBar = showFlightStatus ? liveFlightStatus : null;
 

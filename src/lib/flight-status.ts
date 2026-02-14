@@ -54,6 +54,7 @@ export interface FlightStatusData {
 /** Possible flight phases */
 export type FlightPhase =
   | 'scheduled'
+  | 'boarding'    // boarding in progress
   | 'active'      // in the air
   | 'landed'
   | 'cancelled'
@@ -225,19 +226,41 @@ export function hasFlightStatus(reservation: Reservation): boolean {
 }
 
 /**
- * Validate that stored flight status data actually matches this reservation.
+ * Validate that stored flight status data actually matches this reservation's date.
  *
- * Previously this compared API departure UTC vs reservation start_time with a
- * 3-hour tolerance, but reservation.start_time is often LOCAL time stored as
- * UTC (the email parser strips timezone offsets), causing false rejections for
- * flights in non-UTC timezones. Combined with possible ±1 day date boundary
- * issues, the guard was rejecting virtually all flight data.
+ * Compares the CALENDAR DATE of the API's local departure time (dep_scheduled)
+ * against the reservation's start_time date. Both are local airport times,
+ * so comparing dates is apples-to-apples. Allows ±1 day tolerance for
+ * timezone edge cases (e.g. 11 PM flight that's next day in UTC).
  *
- * The trackable window (-12h/+36h) + flight number match + AirLabs returning
- * the current instance is sufficient protection. This function now always
- * returns true to avoid blocking valid flight data.
+ * This catches the case where AirLabs returned yesterday's flight instance
+ * for a daily flight number (e.g. AA27 flies every day).
  */
-export function isFlightStatusValid(_reservation: Reservation): boolean {
+export function isFlightStatusValid(reservation: Reservation): boolean {
+  const status = reservation.details?._flight_status as FlightStatusData | null;
+  if (!status) return true; // No data to validate
+
+  // Use LOCAL dep_scheduled (not UTC) — same basis as reservation.start_time
+  const apiDepStr = status.dep_scheduled;
+  if (!apiDepStr) return true; // Can't validate without departure time
+
+  // Extract just the date portion (YYYY-MM-DD)
+  const apiDate = apiDepStr.substring(0, 10);
+  const resDate = reservation.start_time.substring(0, 10);
+
+  // Parse as simple dates (no timezone conversion)
+  const apiDateMs = new Date(apiDate + 'T00:00:00Z').getTime();
+  const resDateMs = new Date(resDate + 'T00:00:00Z').getTime();
+  const diffDays = Math.abs(apiDateMs - resDateMs) / (1000 * 60 * 60 * 24);
+
+  if (diffDays > 1) {
+    console.log(
+      `[Flight Guard] Client rejecting stored ${status.flight_iata} data: ` +
+      `API date=${apiDate} vs reservation date=${resDate} (${diffDays} day(s) apart)`
+    );
+    return false;
+  }
+
   return true;
 }
 
@@ -438,6 +461,7 @@ export function getFlightPhaseLabel(phase: FlightPhase, status?: FlightStatusDat
   const effectivePhase = status ? inferFlightPhase(status) : phase;
   const labels: Record<FlightPhase, string> = {
     scheduled: 'Scheduled',
+    boarding: 'Boarding',
     active: 'In Flight',
     landed: 'Landed',
     cancelled: 'Cancelled',
@@ -462,6 +486,8 @@ export function getFlightPhaseColor(phase: FlightPhase, status?: FlightStatusDat
   switch (effectivePhase) {
     case 'scheduled':
       return { bg: '#10B98120', text: '#10B981', dot: '#10B981', pulse: false };
+    case 'boarding':
+      return { bg: '#F59E0B20', text: '#F59E0B', dot: '#F59E0B', pulse: true };
     case 'active':
       return { bg: '#3B82F620', text: '#3B82F6', dot: '#3B82F6', pulse: true };
     case 'landed':
@@ -499,8 +525,11 @@ export function getFlightProgress(status: FlightStatusData): number {
   switch (status.flight_status) {
     case 'scheduled':
       // Calculate progress based on how close to departure
-      if (status.dep_scheduled) {
-        const depTime = new Date(status.dep_scheduled).getTime();
+      // IMPORTANT: Use dep_scheduled_utc for comparison with Date.now() because
+      // dep_scheduled is in airport local time WITHOUT timezone offset.
+      if (status.dep_scheduled_utc || status.dep_scheduled) {
+        const depTimeStr = status.dep_scheduled_utc || status.dep_scheduled;
+        const depTime = new Date(depTimeStr!).getTime();
         const now = Date.now();
         const hoursUntil = (depTime - now) / (1000 * 60 * 60);
         if (hoursUntil > 24) return 0;
@@ -547,13 +576,63 @@ export function getActiveFlightStep(status: FlightStatusData): FlightStep {
   // show departed as the last known step
   if (status.dep_actual) return 'departed';
 
-  // Check if boarding based on time
-  if (status.dep_scheduled) {
-    const depTime = new Date(status.dep_estimated || status.dep_scheduled).getTime();
+  // If API explicitly says boarding, trust it (airline knows best)
+  if (status.flight_status === 'boarding') return 'boarding';
+
+  // Time-based boarding estimation — ONLY use UTC time for accuracy
+  // CRITICAL: Do NOT fall back to local time (dep_scheduled) as it causes
+  // timezone bugs when device is in different timezone than departure airport
+  if (status.dep_scheduled_utc) {
+    const depTimeUtc = new Date(status.dep_scheduled_utc).getTime();
+    // Add delay to get estimated departure
+    const delayMs = (status.dep_delay && status.dep_delay > 0) ? status.dep_delay * 60 * 1000 : 0;
+    const effectiveDepTime = depTimeUtc + delayMs;
     const now = Date.now();
-    const minsUntil = (depTime - now) / (1000 * 60);
-    if (minsUntil <= 30 && minsUntil > 0) return 'boarding';
+    const minsUntil = (effectiveDepTime - now) / (1000 * 60);
+
+    // Determine boarding window based on flight type
+    // Domestic: 40 minutes, International: 75 minutes
+    // Simple heuristic: if both airports are US (or same country), it's domestic
+    const isDomestic = isLikelyDomesticFlight(status.dep_iata, status.arr_iata);
+    const boardingWindowMins = isDomestic ? 40 : 75;
+
+    if (minsUntil <= boardingWindowMins && minsUntil > 0) {
+      return 'boarding';
+    }
   }
 
   return 'scheduled';
+}
+
+/**
+ * Heuristic to determine if a flight is likely domestic (same country).
+ * Uses simple airport code patterns — US airports start with K, Canadian with C, etc.
+ * This is a best-effort guess; not 100% accurate but good enough for boarding windows.
+ */
+function isLikelyDomesticFlight(depIata: string | null, arrIata: string | null): boolean {
+  if (!depIata || !arrIata) return false; // Unknown, assume international (longer window)
+
+  // US domestic: both airports in US (IATA codes map to ICAO starting with K)
+  // Common US airports: LAX, JFK, ORD, ATL, DFW, SFO, etc.
+  const usAirports = new Set([
+    'ATL', 'DFW', 'DEN', 'ORD', 'LAX', 'JFK', 'LAS', 'MCO', 'MIA', 'CLT',
+    'SEA', 'PHX', 'EWR', 'SFO', 'IAH', 'BOS', 'FLL', 'MSP', 'LGA', 'DTW',
+    'PHL', 'SLC', 'DCA', 'SAN', 'BWI', 'TPA', 'AUS', 'BNA', 'MDW', 'PDX',
+  ]);
+
+  const depUpper = depIata.toUpperCase();
+  const arrUpper = arrIata.toUpperCase();
+
+  // If both are in the US airport set, it's domestic
+  if (usAirports.has(depUpper) && usAirports.has(arrUpper)) {
+    return true;
+  }
+
+  // If one is US and one isn't, it's international
+  if (usAirports.has(depUpper) || usAirports.has(arrUpper)) {
+    return false;
+  }
+
+  // For non-US flights, assume international (safer to have longer boarding window)
+  return false;
 }

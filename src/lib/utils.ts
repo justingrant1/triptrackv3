@@ -292,6 +292,66 @@ export function getFlightArrivalUTC(reservation: Reservation): Date | null {
 }
 
 /**
+ * Get the correct UTC start time for any reservation type.
+ * 
+ * For flights: uses timezone-aware departure time (airport timezone).
+ * For non-flights (hotels, cars, etc.): uses device timezone as a reasonable
+ * approximation since these events happen where the user physically is.
+ * 
+ * This is needed for accurate "in progress" checks and countdowns.
+ */
+export function getReservationStartUTC(reservation: Reservation): Date {
+  if (reservation.type === 'flight') {
+    return getFlightDepartureUTC(reservation);
+  }
+  
+  // For non-flight reservations, the start_time is in the local venue timezone.
+  // We don't have explicit timezone data for hotels/cars, so we use the device
+  // timezone as a reasonable approximation. This works well because:
+  // 1. Users typically book local hotels/cars in their current timezone
+  // 2. Even if traveling, the error is bounded (max ±12 hours)
+  // 3. It's better than treating local time as UTC (which can be 8+ hours off)
+  
+  // Parse the ISO string as if it's in the device's local timezone
+  const match = reservation.start_time.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (match) {
+    const year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10) - 1;
+    const day = parseInt(match[3], 10);
+    const hour = parseInt(match[4], 10);
+    const minute = parseInt(match[5], 10);
+    return new Date(year, month, day, hour, minute);
+  }
+  
+  // Fallback
+  return safeParseDate(reservation.start_time);
+}
+
+/**
+ * Get the correct UTC end time for any reservation type.
+ */
+export function getReservationEndUTC(reservation: Reservation): Date | null {
+  if (!reservation.end_time) return null;
+  
+  if (reservation.type === 'flight') {
+    return getFlightArrivalUTC(reservation);
+  }
+  
+  // Same logic as getReservationStartUTC for non-flights
+  const match = reservation.end_time.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (match) {
+    const year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10) - 1;
+    const day = parseInt(match[3], 10);
+    const hour = parseInt(match[4], 10);
+    const minute = parseInt(match[5], 10);
+    return new Date(year, month, day, hour, minute);
+  }
+  
+  return safeParseDate(reservation.end_time);
+}
+
+/**
  * Safely parse a date string, handling Supabase formats with microseconds
  * that can cause Invalid Date on iOS JavaScriptCore.
  * e.g., "2026-02-12T10:10:00.000000" → valid Date
@@ -406,6 +466,32 @@ export const formatDate = (date: Date): string => {
   });
 };
 
+/**
+ * Format a date from an ISO timestamp, preserving the original date.
+ * 
+ * Like formatTimeFromISO, this extracts the date directly from the ISO string
+ * to avoid device timezone conversion. A reservation on "2026-03-14" should
+ * always display as March 14, regardless of the user's timezone.
+ */
+export const formatDateFromISO = (isoString: string): string => {
+  if (!isoString) return '—';
+  
+  // Extract YYYY-MM-DD from the ISO string
+  const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10) - 1; // JS months are 0-indexed
+    const day = parseInt(match[3], 10);
+    
+    // Create date at noon local time to avoid any timezone edge cases
+    const date = new Date(year, month, day, 12, 0, 0);
+    return formatDate(date);
+  }
+  
+  // Fallback
+  return formatDate(new Date(isoString));
+};
+
 export const formatDateLong = (date: Date): string => {
   return date.toLocaleDateString('en-US', {
     weekday: 'long',
@@ -483,6 +569,57 @@ export const isTomorrow = (date: Date): boolean => {
     date.getMonth() === tomorrow.getMonth() &&
     date.getFullYear() === tomorrow.getFullYear()
   );
+};
+
+/**
+ * Check if an ISO date string represents today, without timezone conversion.
+ * 
+ * Extracts the date portion from the ISO string and compares it against
+ * the device's current date. Prevents the bug where "2026-03-14T10:10:00"
+ * (local airport time) gets interpreted as UTC and shifts to the wrong day.
+ */
+export const isTodayISO = (isoString: string): boolean => {
+  if (!isoString) return false;
+  
+  // Extract YYYY-MM-DD from the ISO string
+  const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return false;
+  
+  const isoYear = parseInt(match[1], 10);
+  const isoMonth = parseInt(match[2], 10);
+  const isoDay = parseInt(match[3], 10);
+  
+  // Get today's date in device timezone
+  const today = new Date();
+  const todayYear = today.getFullYear();
+  const todayMonth = today.getMonth() + 1; // JS months are 0-indexed
+  const todayDay = today.getDate();
+  
+  return isoYear === todayYear && isoMonth === todayMonth && isoDay === todayDay;
+};
+
+/**
+ * Check if an ISO date string represents tomorrow, without timezone conversion.
+ */
+export const isTomorrowISO = (isoString: string): boolean => {
+  if (!isoString) return false;
+  
+  // Extract YYYY-MM-DD from the ISO string
+  const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return false;
+  
+  const isoYear = parseInt(match[1], 10);
+  const isoMonth = parseInt(match[2], 10);
+  const isoDay = parseInt(match[3], 10);
+  
+  // Get tomorrow's date in device timezone
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowYear = tomorrow.getFullYear();
+  const tomorrowMonth = tomorrow.getMonth() + 1;
+  const tomorrowDay = tomorrow.getDate();
+  
+  return isoYear === tomorrowYear && isoMonth === tomorrowMonth && isoDay === tomorrowDay;
 };
 
 // ─── Centralized Reservation Color & Icon Maps ──────────────────────────────
@@ -716,7 +853,14 @@ export function getFlightAwareCountdown(
       // timezone storage issues (local time stored as UTC).
       const depUtcStr = flightStatus.dep_scheduled_utc;
       if (depUtcStr) {
-        const depUtcMs = new Date(depUtcStr).getTime();
+        // CRITICAL: dep_scheduled_utc may lack a 'Z' suffix (e.g. "2026-02-12 07:20").
+        // Without 'Z', new Date() treats it as LOCAL time on the device, causing
+        // the countdown to be off by the device's UTC offset (e.g. 5 hours in EST).
+        // Force UTC interpretation by appending 'Z' if no timezone indicator exists.
+        const utcSafe = depUtcStr.match(/[Zz]$|[+-]\d{2}:?\d{2}$/)
+          ? depUtcStr
+          : depUtcStr.replace(' ', 'T') + 'Z';
+        const depUtcMs = new Date(utcSafe).getTime();
         if (!isNaN(depUtcMs)) {
           const delayMs = (flightStatus.dep_delay ?? 0) * 60 * 1000;
           const actualDepMs = depUtcMs + delayMs;

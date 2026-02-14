@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator, Alert, Linking } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   X,
@@ -425,6 +425,31 @@ export function UpgradeModal({ visible, onClose, reason }: UpgradeModalProps) {
                     )}
                   </View>
                 </Pressable>
+
+                {/* Legal Links */}
+                <View className="flex-row items-center justify-center gap-3 mb-2">
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      Linking.openURL('https://triptrack.ai/terms');
+                    }}
+                  >
+                    <Text className="text-slate-500 text-xs underline" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Terms
+                    </Text>
+                  </Pressable>
+                  <Text className="text-slate-600 text-xs">•</Text>
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      Linking.openURL('https://triptrack.ai/privacy');
+                    }}
+                  >
+                    <Text className="text-slate-500 text-xs underline" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      Privacy
+                    </Text>
+                  </Pressable>
+                </View>
 
                 <Pressable onPress={handleClose} className="py-3">
                   <Text

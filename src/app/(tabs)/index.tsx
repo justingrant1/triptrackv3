@@ -42,8 +42,9 @@ import * as Linking from 'expo-linking';
 import { useUpcomingTrips } from '@/lib/hooks/useTrips';
 import { useUpcomingReservations } from '@/lib/hooks/useReservations';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatDate, getCountdown, isToday, isTomorrow, getFlightAwareCountdown, getContextualTimeInfo, getFlightDepartureUTC } from '@/lib/utils';
+import { formatTime, formatDate, formatDateFromISO, getCountdown, isToday, isTomorrow, isTodayISO, isTomorrowISO, getFlightAwareCountdown, getContextualTimeInfo, getFlightDepartureUTC, getReservationStartUTC, parseDateOnly } from '@/lib/utils';
 import { useAuthStore } from '@/lib/state/auth-store';
+import { useProfile } from '@/lib/hooks/useProfile';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { ReservationExpandedDetails } from '@/components/ReservationExpandedDetails';
@@ -52,8 +53,11 @@ import { useUnreadNotificationCount } from '@/lib/hooks/useNotifications';
 import { isNetworkError } from '@/lib/error-utils';
 import { OfflineToast } from '@/components/OfflineToast';
 import { getStoredFlightStatus, checkFlightStatusForTrip, getPollingInterval } from '@/lib/flight-status';
+import { updateTripStatuses } from '@/lib/trip-status';
 import type { FlightStatusData } from '@/lib/flight-status';
 import { useRefreshFlightStatus } from '@/lib/hooks/useFlightStatus';
+import { useResponsive } from '@/lib/hooks/useResponsive';
+import { ResponsiveContainer } from '@/components/ResponsiveContainer';
 
 type ReservationType = Reservation['type'];
 
@@ -65,6 +69,52 @@ function isReservationCancelled(reservation: Reservation): boolean {
     if (flightStatus?.flight_status === 'cancelled') return true;
   }
   return false;
+}
+
+/**
+ * Determine if a reservation is currently in progress (active/underway).
+ * - Flights: in-flight (has departed but not landed)
+ * - Other reservations: start time has passed but end time hasn't (e.g., hotel stay)
+ */
+function isInProgress(reservation: Reservation): boolean {
+  const now = new Date();
+
+  // Skip cancelled items
+  if (isReservationCancelled(reservation)) return false;
+
+  // Flight-specific: check if in-flight
+  if (reservation.type === 'flight') {
+    const flightStatus = reservation.details?._flight_status as FlightStatusData | undefined;
+
+    if (flightStatus) {
+      // API says active (in-flight)
+      if (flightStatus.flight_status === 'active') return true;
+
+      // Has departed but not landed
+      if (flightStatus.dep_actual && !flightStatus.arr_actual) return true;
+
+      // If landed, not in progress
+      if (flightStatus.flight_status === 'landed' || flightStatus.arr_actual) return false;
+    }
+
+    // Fallback: check if departure time has passed
+    const depTime = getFlightDepartureUTC(reservation);
+    const minsSinceDeparture = (now.getTime() - depTime.getTime()) / 60000;
+    // If departed >30 min ago and no live data saying otherwise, assume in-flight
+    if (minsSinceDeparture > 30) return true;
+
+    return false;
+  }
+
+  // Non-flight reservations: in progress if started but not ended
+  // BUG FIX: Use timezone-aware start time
+  const startTime = getReservationStartUTC(reservation);
+  const endTime = reservation.end_time ? new Date(reservation.end_time) : null;
+
+  const hasStarted = startTime.getTime() < now.getTime();
+  const hasEnded = endTime ? endTime.getTime() < now.getTime() : false;
+
+  return hasStarted && !hasEnded;
 }
 
 /**
@@ -124,7 +174,8 @@ function isNextUpCandidate(reservation: Reservation): boolean {
   }
 
   // Non-flight reservations: skip if start time was >30 min ago
-  const startTime = new Date(reservation.start_time);
+  // BUG FIX: Use timezone-aware start time
+  const startTime = getReservationStartUTC(reservation);
   const minsSinceStart = (now.getTime() - startTime.getTime()) / 60000;
   if (minsSinceStart > 30) return false;
 
@@ -596,7 +647,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
               {timeInfo.time}
             </Text>
             <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-              {timeInfo.label}{' · '}{isToday(new Date(reservation.start_time)) ? 'Today' : isTomorrow(new Date(reservation.start_time)) ? 'Tomorrow' : formatDate(new Date(reservation.start_time))}
+              {timeInfo.label}{' · '}{isTodayISO(reservation.start_time) ? 'Today' : isTomorrowISO(reservation.start_time) ? 'Tomorrow' : formatDateFromISO(reservation.start_time)}
             </Text>
           </View>
           {expanded ? (
@@ -693,10 +744,67 @@ export default function TodayScreen() {
   const { user } = useAuthStore();
   const [refreshing, setRefreshing] = React.useState(false);
   const [showOfflineToast, setShowOfflineToast] = React.useState(false);
+  const responsive = useResponsive();
   
   const { data: upcomingTrips = [], refetch: refetchTrips } = useUpcomingTrips();
   const { data: upcomingReservations = [], refetch: refetchReservations } = useUpcomingReservations();
   const { data: unreadCount = 0 } = useUnreadNotificationCount();
+  const { data: profile } = useProfile();
+
+  // Ambient orb animations
+  const orb1X = useSharedValue(-100);
+  const orb1Y = useSharedValue(50);
+  const orb2X = useSharedValue(200);
+  const orb2Y = useSharedValue(150);
+
+  React.useEffect(() => {
+    // Slow drifting orbs
+    orb1X.value = withRepeat(
+      withTiming(100, { duration: 20000, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true
+    );
+    orb1Y.value = withRepeat(
+      withTiming(150, { duration: 15000, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true
+    );
+    orb2X.value = withRepeat(
+      withTiming(-50, { duration: 18000, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true
+    );
+    orb2Y.value = withRepeat(
+      withTiming(80, { duration: 22000, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true
+    );
+  }, []);
+
+  const orb1Style = useAnimatedStyle(() => ({
+    transform: [{ translateX: orb1X.value }, { translateY: orb1Y.value }],
+  }));
+
+  const orb2Style = useAnimatedStyle(() => ({
+    transform: [{ translateX: orb2X.value }, { translateY: orb2Y.value }],
+  }));
+
+  // Time-aware greeting
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    const firstName = profile?.name?.split(' ')[0] || user?.email?.split('@')[0] || 'there';
+    
+    if (hour < 12) return `Good morning, ${firstName}`;
+    if (hour < 18) return `Good afternoon, ${firstName}`;
+    return `Good evening, ${firstName}`;
+  };
+
+  const getGreetingEmoji = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return '☀️';
+    if (hour < 18) return '👋';
+    return '🌙';
+  };
 
   // Flight status refresh mutation — triggers the edge function to get fresh data from AirLabs
   const refreshFlightStatus = useRefreshFlightStatus();
@@ -712,56 +820,19 @@ export default function TodayScreen() {
     return Array.from(ids);
   }, [upcomingReservations]);
 
-  // ─── Automatic Flight Status Polling ───────────────────────────────────────
-  // Find the nearest upcoming flight to determine polling interval
-  const nearestFlight = React.useMemo(() => {
-    return upcomingReservations
-      .filter(r => r.type === 'flight' && !isReservationCancelled(r))
-      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0] ?? null;
-  }, [upcomingReservations]);
-
-  React.useEffect(() => {
-    if (!nearestFlight || tripIdsWithFlights.length === 0) return;
-
-    const departureTime = new Date(nearestFlight.start_time);
-    const storedStatus = getStoredFlightStatus(nearestFlight);
-    const arrivalTime = nearestFlight.end_time ? new Date(nearestFlight.end_time) : null;
-
-    const interval = getPollingInterval(
-      departureTime,
-      storedStatus?.flight_status,
-      arrivalTime,
-    );
-
-    // No polling needed (flight landed/cancelled or too far out)
-    if (!interval) return;
-
-    console.log(`[TodayScreen] Flight polling every ${Math.round(interval / 60000)}m for ${nearestFlight.title}`);
-
-    const pollFlightStatus = async () => {
-      for (const tripId of tripIdsWithFlights) {
-        try {
-          await checkFlightStatusForTrip(tripId);
-        } catch (err) {
-          console.error('[TodayScreen] Flight poll error:', err);
-        }
-      }
-      // Refetch reservations to pick up updated flight status from DB
-      refetchReservations();
-    };
-
-    const timer = setInterval(pollFlightStatus, interval);
-
-    // Also do an initial check when the screen mounts / flight changes
-    pollFlightStatus();
-
-    return () => clearInterval(timer);
-  }, [nearestFlight?.id, JSON.stringify(tripIdsWithFlights)]);
-
   // ─── Pull-to-Refresh ──────────────────────────────────────────────────────
+  // Note: Automatic flight status polling is handled by:
+  // 1. Trip detail page (useFlightStatusPolling hook)
+  // 2. Server-side cron job (every 15 min)
+  // This screen only refreshes on pull-to-refresh to avoid duplicate API calls
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
     try {
+      // Update trip statuses first (active → completed if end date passed)
+      if (user?.id) {
+        await updateTripStatuses(user.id).catch(() => {});
+      }
+
       // Refresh flight status from the API for all trips with flights
       const flightRefreshPromises = tripIdsWithFlights.map(tripId =>
         refreshFlightStatus.mutateAsync(tripId).catch(err => {
@@ -795,7 +866,21 @@ export default function TodayScreen() {
       }
     }
     setRefreshing(false);
-  }, [refetchTrips, refetchReservations, tripIdsWithFlights, refreshFlightStatus]);
+  }, [refetchTrips, refetchReservations, tripIdsWithFlights, refreshFlightStatus, user?.id]);
+  const activeTrip = upcomingTrips.find(t => t.status === 'active');
+  // Find the active trip with client-side date guard to prevent stale data
+  const activeTrip = upcomingTrips.find(t => {
+    if (t.status !== 'active') return false;
+    
+    // Client-side guard: verify the trip hasn't actually ended
+    // (protects against stale DB status if updateTripStatuses hasn't run)
+    const endDate = parseDateOnly(t.end_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+    
+    return endDate >= today;
+  });
 
   const activeTrip = upcomingTrips.find(t => t.status === 'active');
   
@@ -805,9 +890,15 @@ export default function TodayScreen() {
   const nextUpIndex = nextUp ? upcomingReservations.indexOf(nextUp) : -1;
   
   // Separate today vs later (include cancelled ones in the list, just not as "Next Up")
-  const todayReservations = upcomingReservations.filter(r => isToday(new Date(r.start_time)));
-  // "Later today" = today's reservations minus the one shown as Next Up
-  const laterToday = todayReservations.filter(r => r.id !== nextUp?.id);
+  // BUG FIX: Use isTodayISO to avoid timezone conversion
+  const todayReservations = upcomingReservations.filter(r => isTodayISO(r.start_time));
+  
+  // Split today's reservations into categories
+  const inProgressItems = todayReservations.filter(r => isInProgress(r));
+  // "Later today" = today's reservations minus nextUp and in-progress items
+  const laterToday = todayReservations.filter(r => 
+    r.id !== nextUp?.id && !isInProgress(r)
+  );
   
   // Get upcoming reservations in next 48 hours (for "Coming Up" section)
   const upcoming48h = upcomingReservations;
@@ -893,6 +984,38 @@ export default function TodayScreen() {
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
       />
 
+      {/* Ambient gradient orbs */}
+      <Animated.View
+        style={[
+          orb1Style,
+          {
+            position: 'absolute',
+            width: 300,
+            height: 300,
+            borderRadius: 150,
+            backgroundColor: '#3B82F6',
+            opacity: 0.08,
+            top: -50,
+            left: -100,
+          },
+        ]}
+      />
+      <Animated.View
+        style={[
+          orb2Style,
+          {
+            position: 'absolute',
+            width: 250,
+            height: 250,
+            borderRadius: 125,
+            backgroundColor: '#8B5CF6',
+            opacity: 0.06,
+            top: 100,
+            right: -80,
+          },
+        ]}
+      />
+
       <SafeAreaView className="flex-1" edges={['top']}>
         <ScrollView 
           className="flex-1" 
@@ -905,39 +1028,50 @@ export default function TodayScreen() {
             />
           }
         >
-          {/* Compact Header */}
-          <Animated.View
-            entering={FadeInDown.duration(500)}
-            className="px-5 pt-3 pb-4"
-          >
-            <View className="flex-row items-center justify-between">
-              {/* Compact greeting with trip context */}
+          {/* Hero Header with Greeting */}
+          <ResponsiveContainer>
+            <Animated.View
+              entering={FadeInDown.duration(600)}
+              className="px-5 pt-4 pb-6"
+            >
+            <View className="flex-row items-start justify-between mb-4">
               <View className="flex-1">
-                {activeTrip && weather ? (
-                  <Pressable onPress={handleActiveTripPress} className="flex-row items-center">
-                    <View className="w-2 h-2 rounded-full bg-emerald-500 mr-2" />
-                    <Text className="text-white text-lg font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                      {activeTrip.destination}
-                    </Text>
-                    <Text className="text-slate-500 text-base ml-2" style={{ fontFamily: 'DMSans_400Regular' }}>
-                      {weather.temperature}° {getWeatherIcon(weather.condition)}
-                    </Text>
-                    <ChevronRight size={16} color="#64748B" className="ml-1" />
-                  </Pressable>
-                ) : (
-                  <Text className="text-white text-lg font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                    Today
+                {/* Time-aware greeting */}
+                <Animated.View entering={FadeInDown.duration(700).delay(100)}>
+                  <Text className="text-slate-400 text-sm mb-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+                    {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
                   </Text>
+                  <Text className="text-white text-2xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    {getGreeting()} {getGreetingEmoji()}
+                  </Text>
+                </Animated.View>
+
+                {/* Active trip context */}
+                {activeTrip && weather && (
+                  <Animated.View entering={FadeInDown.duration(700).delay(200)}>
+                    <Pressable onPress={handleActiveTripPress} className="flex-row items-center mt-3">
+                      <View className="w-2 h-2 rounded-full bg-emerald-500 mr-2" />
+                      <Text className="text-emerald-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                        {activeTrip.destination}
+                      </Text>
+                      <Text className="text-slate-500 text-sm ml-2" style={{ fontFamily: 'DMSans_400Regular' }}>
+                        {weather.temperature}° {getWeatherIcon(weather.condition)}
+                      </Text>
+                      <ChevronRight size={14} color="#64748B" className="ml-1" />
+                    </Pressable>
+                  </Animated.View>
                 )}
               </View>
+
+              {/* Notification bell */}
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   router.push('/notifications');
                 }}
-                className="bg-slate-800/80 p-2.5 rounded-full border border-slate-700/50"
+                className="bg-slate-800/60 p-3 rounded-full border border-slate-700/40"
               >
-                <Bell size={18} color="#94A3B8" />
+                <Bell size={20} color="#94A3B8" />
                 {unreadCount > 0 && (
                   <View
                     style={{
@@ -962,16 +1096,21 @@ export default function TodayScreen() {
                 )}
               </Pressable>
             </View>
-          </Animated.View>
+            </Animated.View>
+          </ResponsiveContainer>
 
           {/* Next Up Card */}
-          {nextUp ? (
-            <NextUpCard reservation={nextUp} />
-          ) : (
-            <Animated.View
-              entering={FadeInDown.duration(600)}
-              className="mx-4 bg-slate-800/30 rounded-3xl p-8 items-center border border-slate-700/30"
-            >
+          <ResponsiveContainer>
+            {nextUp ? (
+              <View className="px-5">
+                <NextUpCard reservation={nextUp} />
+              </View>
+            ) : (
+              <View className="px-5">
+                <Animated.View
+                  entering={FadeInDown.duration(600)}
+                  className="bg-slate-800/30 rounded-3xl p-8 items-center border border-slate-700/30"
+                >
               <View className="bg-slate-700/30 p-4 rounded-full mb-4">
                 <Sparkles size={32} color="#64748B" />
               </View>
@@ -992,14 +1131,17 @@ export default function TodayScreen() {
                   Add a Trip
                 </Text>
               </Pressable>
-            </Animated.View>
-          )}
+                </Animated.View>
+              </View>
+            )}
+          </ResponsiveContainer>
 
           {/* Contextual Quick Actions */}
-          <Animated.View
-            entering={FadeInDown.duration(500).delay(200)}
-            className="flex-row px-5 mt-5"
-          >
+          <ResponsiveContainer>
+            <Animated.View
+              entering={FadeInDown.duration(500).delay(200)}
+              className="flex-row px-5 mt-5"
+            >
             {quickActions.map((action, index) => (
               <React.Fragment key={action.label}>
                 {index > 0 && <View className="w-3" />}
@@ -1011,11 +1153,13 @@ export default function TodayScreen() {
                 />
               </React.Fragment>
             ))}
-          </Animated.View>
+            </Animated.View>
+          </ResponsiveContainer>
 
           {/* Later Today / Upcoming */}
-          {laterToday.length > 0 && (
-            <View className="mt-8 px-5">
+          <ResponsiveContainer>
+            {laterToday.length > 0 && (
+              <View className="mt-8 px-5">
               <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                 Later Today
               </Text>
@@ -1024,11 +1168,11 @@ export default function TodayScreen() {
                   <UpcomingItem key={res.id} reservation={res} index={i} />
                 ))}
               </View>
-            </View>
-          )}
+              </View>
+            )}
 
-          {upcoming48h.length > (todayReservations.length > 0 ? todayReservations.length : 1) && (
-            <View className="mt-8 px-5 pb-8">
+            {upcoming48h.length > (todayReservations.length > 0 ? todayReservations.length : 1) && (
+              <View className="mt-8 px-5">
               <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                 Coming Up
               </Text>
@@ -1039,8 +1183,26 @@ export default function TodayScreen() {
                     <UpcomingItem key={res.id} reservation={res} index={i} />
                   ))}
               </View>
-            </View>
-          )}
+              </View>
+            )}
+
+            {/* In Progress — items currently underway (in-flight, hotel stays, etc.) */}
+            {inProgressItems.length > 0 && (
+              <View className="mt-8 px-5 pb-8">
+              <View className="flex-row items-center mb-4">
+                <Plane size={14} color="#3B82F6" style={{ transform: [{ rotate: '45deg' }] }} />
+                <Text className="text-slate-400 text-sm font-semibold uppercase tracking-wider ml-2" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                  In Progress
+                </Text>
+              </View>
+              <View className="gap-3">
+                {inProgressItems.map((res, i) => (
+                  <UpcomingItem key={res.id} reservation={res} index={i} />
+                ))}
+              </View>
+              </View>
+            )}
+          </ResponsiveContainer>
 
           <View className="h-8" />
         </ScrollView>

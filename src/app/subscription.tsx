@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -580,6 +580,36 @@ export default function SubscriptionScreen() {
               </View>
             </Animated.View>
           )}
+
+          {/* Legal Footer */}
+          <Animated.View entering={FadeInDown.duration(500).delay(250)} className="mt-6 px-2">
+            <Text className="text-slate-500 text-xs text-center leading-5 mb-3" style={{ fontFamily: 'DMSans_400Regular' }}>
+              Subscription automatically renews unless cancelled at least 24 hours before the end of the current period. Your account will be charged for renewal within 24 hours prior to the end of the current period. You can manage and cancel your subscriptions in your App Store account settings.
+            </Text>
+            <View className="flex-row items-center justify-center gap-4">
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Linking.openURL('https://triptrack.ai/terms');
+                }}
+              >
+                <Text className="text-slate-400 text-xs underline" style={{ fontFamily: 'DMSans_400Regular' }}>
+                  Terms of Service
+                </Text>
+              </Pressable>
+              <Text className="text-slate-600 text-xs">•</Text>
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Linking.openURL('https://triptrack.ai/privacy');
+                }}
+              >
+                <Text className="text-slate-400 text-xs underline" style={{ fontFamily: 'DMSans_400Regular' }}>
+                  Privacy Policy
+                </Text>
+              </Pressable>
+            </View>
+          </Animated.View>
 
           <View className="h-8" />
         </ScrollView>

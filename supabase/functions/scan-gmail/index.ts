@@ -1185,10 +1185,35 @@ async function findOrCreateTrip(
   parsed: ParsedTripData,
   stats: ScanStats
 ): Promise<string | null> {
-  const { destination, country, region, trip_dates } = parsed;
+  let { destination, country, region, trip_dates } = parsed;
 
-  if (!destination || !trip_dates?.start || !trip_dates?.end) {
-    console.warn('Missing destination or trip dates, cannot create trip');
+  // Validate destination: reject string "null", "undefined", "N/A", etc.
+  const invalidDestinations = ['null', 'undefined', 'n/a', 'na', 'none', 'unknown', ''];
+  if (!destination || invalidDestinations.includes(destination.toLowerCase().trim())) {
+    console.warn(`Invalid destination: "${destination}" — attempting fallback`);
+    
+    // Fallback: try to extract destination from reservation location
+    if (parsed.location) {
+      destination = parsed.location;
+      console.log(`Using location as destination: "${destination}"`);
+    } else if (parsed.title) {
+      // Extract city from title (e.g., "Hilton Downtown NYC" → "NYC")
+      const titleMatch = parsed.title.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/);
+      if (titleMatch) {
+        destination = titleMatch[1];
+        console.log(`Extracted destination from title: "${destination}"`);
+      }
+    }
+    
+    // If still invalid, reject
+    if (!destination || invalidDestinations.includes(destination.toLowerCase().trim())) {
+      console.warn('Cannot determine valid destination, skipping trip creation');
+      return null;
+    }
+  }
+
+  if (!trip_dates?.start || !trip_dates?.end) {
+    console.warn('Missing trip dates, cannot create trip');
     return null;
   }
 
@@ -1522,6 +1547,14 @@ async function handleReceiptScan(
   userId: string,
   accessToken: string
 ): Promise<{ success: boolean; summary: ReceiptScanStats }> {
+  // Time budget: stop processing before the 150s Supabase timeout
+  const SCAN_START_TIME = Date.now();
+  const TIME_BUDGET_MS = 115_000; // 115 seconds — leave 35s buffer for cleanup + response
+
+  function hasTimeBudget(): boolean {
+    return (Date.now() - SCAN_START_TIME) < TIME_BUDGET_MS;
+  }
+
   const stats: ReceiptScanStats = {
     messagesScanned: 0,
     skippedAlreadyProcessed: 0,
@@ -1533,12 +1566,12 @@ async function handleReceiptScan(
     errors: 0,
   };
 
-  // Search Gmail for receipt emails
+  // Search Gmail for receipt emails (reduced from 30 to 15 to avoid timeout)
   const query = buildReceiptSearchQuery();
   console.log('Receipt search query length:', query.length);
 
   const searchResponse = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=30`,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=15`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
 
@@ -1553,6 +1586,12 @@ async function handleReceiptScan(
   console.log(`Found ${messages.length} potential receipt emails`);
 
   for (const message of messages) {
+    // Check time budget before starting a new email
+    if (!hasTimeBudget()) {
+      console.log(`⏱️ [Receipt] Time budget exhausted after ${Math.round((Date.now() - SCAN_START_TIME) / 1000)}s — stopping early`);
+      break;
+    }
+
     try {
       // Check if already processed (use receipt-specific prefix)
       const receiptMsgId = `receipt_${message.id}`;
