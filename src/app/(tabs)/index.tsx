@@ -742,6 +742,131 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
   );
 }
 
+/**
+ * Rich card for in-progress flights — shows full flight status bar with timeline
+ */
+function InProgressFlightCard({ reservation, index }: { reservation: Reservation; index: number }) {
+  const router = useRouter();
+  const [expanded, setExpanded] = React.useState(false);
+  const [primary, secondary] = getTypeColor(reservation.type);
+
+  const flightStatus = getStoredFlightStatus(reservation);
+  const timeInfo = getContextualTimeInfo(reservation, flightStatus);
+
+  const handleToggleExpand = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setExpanded(!expanded);
+  };
+
+  return (
+    <Pressable
+      onPress={handleToggleExpand}
+      className="mb-4 overflow-hidden rounded-3xl"
+    >
+      <Animated.View entering={FadeInDown.duration(600).delay(index * 100).springify()}>
+        <LinearGradient
+          colors={[primary, secondary]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{ padding: 2, borderRadius: 24 }}
+        >
+          <View className="rounded-3xl bg-slate-900/95 p-5">
+            {/* Header */}
+            <View className="flex-row items-start justify-between mb-3">
+              <View className="flex-row items-center flex-1">
+                <View
+                  style={{
+                    backgroundColor: primary + '30',
+                    padding: 12,
+                    borderRadius: 16,
+                  }}
+                >
+                  <ReservationIcon type={reservation.type} size={24} color={primary} />
+                </View>
+                <View className="ml-3 flex-1">
+                  <Text className="text-slate-400 text-xs font-medium uppercase tracking-wider" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                    In Progress
+                  </Text>
+                  <Text className="text-white text-lg font-bold mt-0.5" style={{ fontFamily: 'DMSans_700Bold' }}>
+                    {reservation.title}
+                  </Text>
+                  {reservation.subtitle && (
+                    <Text className="text-slate-300 text-sm mt-0.5" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      {reservation.subtitle}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </View>
+
+            {/* Full Flight Status Bar — the hero element */}
+            {flightStatus && (
+              <View className="mb-3">
+                <FlightStatusBar status={flightStatus} compact={false} />
+              </View>
+            )}
+
+            {/* Quick Info Row */}
+            <View className="flex-row items-center bg-slate-800/50 rounded-xl p-3 mb-2">
+              <Clock size={16} color="#94A3B8" />
+              <Text className="text-slate-400 text-xs ml-1.5 mr-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                {timeInfo.label}
+              </Text>
+              <Text className="text-white text-base font-medium" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+                {timeInfo.time}
+              </Text>
+            </View>
+
+            {reservation.alert_message && (
+              <View className="bg-amber-500/20 rounded-xl p-3 flex-row items-center mb-2">
+                <AlertCircle size={16} color="#F59E0B" />
+                <Text className="text-amber-400 text-sm ml-2 flex-1 font-medium" style={{ fontFamily: 'DMSans_500Medium' }}>
+                  {reservation.alert_message}
+                </Text>
+              </View>
+            )}
+
+            {/* Expanded Details */}
+            {expanded && (
+              <Animated.View entering={FadeInDown.duration(300)}>
+                <View className="mt-2 pt-3 border-t border-slate-700/50">
+                  <ReservationExpandedDetails reservation={reservation} compact showFlightStatus={false} />
+                </View>
+
+                {/* View Full Trip link */}
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push(`/trip/${reservation.trip_id}`);
+                  }}
+                  className="flex-row items-center justify-center mt-3 pt-3 border-t border-slate-700/30"
+                >
+                  <ExternalLink size={14} color="#64748B" />
+                  <Text className="text-slate-500 text-sm ml-1.5" style={{ fontFamily: 'DMSans_500Medium' }}>
+                    View Full Trip
+                  </Text>
+                </Pressable>
+              </Animated.View>
+            )}
+
+            {/* Toggle indicator */}
+            <View className="flex-row items-center justify-end mt-1">
+              <Text className="text-slate-400 text-sm mr-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                {expanded ? 'Less' : 'Details'}
+              </Text>
+              {expanded ? (
+                <ChevronUp size={16} color="#94A3B8" />
+              ) : (
+                <ChevronDown size={16} color="#94A3B8" />
+              )}
+            </View>
+          </View>
+        </LinearGradient>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 function QuickAction({ icon, label, color, onPress }: { icon: React.ReactNode; label: string; color: string; onPress: () => void }) {
   const scale = useSharedValue(1);
 
@@ -994,7 +1119,24 @@ export default function TodayScreen() {
       case 'hotel':
         baseActions.push(
           { icon: <Navigation size={22} color="#3B82F6" />, label: 'Navigate', color: '#3B82F6', onPress: handleNavigate },
-          { icon: <Phone size={22} color="#8B5CF6" />, label: 'Call Hotel', color: '#8B5CF6', onPress: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning) }
+          { icon: <Phone size={22} color="#8B5CF6" />, label: 'Call Hotel', color: '#8B5CF6', onPress: () => {
+            const phoneNumber = nextUp.details?.['Phone'];
+            if (phoneNumber) {
+              // Clean phone number: remove spaces, dashes, parentheses
+              const cleanPhone = phoneNumber.toString().replace(/[\s\-\(\)]/g, '');
+              Linking.openURL(`tel:${cleanPhone}`).catch(() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                Alert.alert('Error', 'Unable to open phone dialer');
+              });
+            } else {
+              // Fallback: open Google search for hotel phone number
+              const hotelName = nextUp.title;
+              const searchQuery = encodeURIComponent(`${hotelName} phone number`);
+              Linking.openURL(`https://www.google.com/search?q=${searchQuery}`).catch(() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              });
+            }
+          }}
         );
         break;
       case 'car':
@@ -1239,7 +1381,12 @@ export default function TodayScreen() {
               </View>
               <View className="gap-3">
                 {inProgressItems.map((res, i) => (
-                  <UpcomingItem key={res.id} reservation={res} index={i} />
+                  // Use rich card for flights, compact card for other types
+                  res.type === 'flight' ? (
+                    <InProgressFlightCard key={res.id} reservation={res} index={i} />
+                  ) : (
+                    <UpcomingItem key={res.id} reservation={res} index={i} />
+                  )
                 ))}
               </View>
               </View>

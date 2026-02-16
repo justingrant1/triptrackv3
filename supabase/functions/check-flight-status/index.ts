@@ -444,14 +444,25 @@ function cleanFlightNumber(input: string): string | null {
 /**
  * Check if a reservation is within the trackable window.
  * AirLabs only returns today's real-time data, so we should only call it
- * for flights departing within -12h to +36h of now.
+ * for flights departing within -24h to +36h of now.
+ * 
+ * IMPORTANT: If the stored status shows the flight is "active" (in the air),
+ * ALWAYS allow tracking regardless of departure time — we need to fetch the
+ * "landed" status when it arrives.
  */
 function isWithinTrackableWindow(reservation: Reservation): boolean {
+  // Override: if flight is currently active (in the air), always track it
+  const storedStatus = reservation.details?._flight_status?.flight_status;
+  if (storedStatus === 'active') {
+    console.log(`[Flight Guard] Allowing active flight ${reservation.id} — plane is in the air`);
+    return true;
+  }
+
   const now = Date.now();
   const depTime = new Date(reservation.start_time).getTime();
   const hoursUntil = (depTime - now) / (1000 * 60 * 60);
-  // -12h (departed up to 12h ago) to +36h (departing within next 36h)
-  return hoursUntil >= -12 && hoursUntil <= 36;
+  // -24h (departed up to 24h ago — covers longest flights ~20h) to +36h (departing within next 36h)
+  return hoursUntil >= -24 && hoursUntil <= 36;
 }
 
 /**

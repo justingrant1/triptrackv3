@@ -114,9 +114,31 @@ export function useCreateTrip() {
         queryClient.setQueryData(queryKeys.trips.all, context.previous);
       }
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       // Schedule local reminders for the new trip
       rescheduleRemindersForTrip(data).catch(console.error);
+
+      // Clear any matching deleted_trips records so future emails can merge into this trip
+      // This handles the case where a user manually recreates a trip they previously deleted
+      try {
+        const bufferDays = 7;
+        const bufferedStart = new Date(data.start_date);
+        bufferedStart.setDate(bufferedStart.getDate() - bufferDays);
+        const bufferedEnd = new Date(data.end_date);
+        bufferedEnd.setDate(bufferedEnd.getDate() + bufferDays);
+
+        await supabase
+          .from('deleted_trips')
+          .delete()
+          .eq('destination', data.destination)
+          .gte('end_date', bufferedStart.toISOString().split('T')[0])
+          .lte('start_date', bufferedEnd.toISOString().split('T')[0]);
+
+        console.log(`Cleared deleted_trips records for manually recreated trip: ${data.destination}`);
+      } catch (error) {
+        console.warn('Failed to clear deleted_trips records:', error);
+        // Don't throw - trip creation succeeded, this is just cleanup
+      }
     },
     onSettled: () => {
       // Always refetch to get the real server state
@@ -196,6 +218,37 @@ export function useDeleteTrip() {
 
   return useMutation({
     mutationFn: async (tripId: string) => {
+      // STEP 1: Fetch the trip details BEFORE deleting (we need destination + dates)
+      const { data: trip, error: fetchError } = await supabase
+        .from('trips')
+        .select('destination, start_date, end_date, name, user_id')
+        .eq('id', tripId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // STEP 2: Record the deleted trip fingerprint to prevent recreation
+      // This prevents the trip from reappearing when new emails about it arrive
+      if (trip) {
+        const { error: insertError } = await supabase
+          .from('deleted_trips')
+          .insert({
+            user_id: trip.user_id, // ← CRITICAL FIX: This was missing, causing silent insert failures
+            destination: trip.destination,
+            start_date: trip.start_date,
+            end_date: trip.end_date,
+            original_trip_name: trip.name,
+          });
+        
+        if (insertError) {
+          console.error('[Delete Trip] Failed to record deleted trip:', insertError);
+          // Note: We don't throw — deletion should proceed even if logging fails
+        } else {
+          console.log(`[Delete Trip] Recorded deleted trip: ${trip.name} (${trip.destination})`);
+        }
+      }
+
+      // STEP 3: Delete the trip (cascade deletes reservations via DB foreign key)
       const { error } = await supabase
         .from('trips')
         .delete()

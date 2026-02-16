@@ -133,8 +133,15 @@ function validateParsedTripDates(parsed: ParsedTrip): ParsedTrip {
   };
 }
 
-async function parseEmailWithAI(emailText: string): Promise<ParsedTrip> {
+async function parseEmailWithAI(emailText: string, existingTripsContext?: string): Promise<ParsedTrip> {
+  const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+  
   const prompt = `You are a travel email parser. Extract trip and reservation details from this confirmation email.
+
+IMPORTANT CONTEXT:
+- Today's date is ${todayDate}
+- When inferring years from dates without explicit years (e.g., "Sun, Feb 15"), use the NEAREST FUTURE occurrence, not past dates
+${existingTripsContext ? `\n${existingTripsContext}` : ''}
 
 Return ONLY valid JSON in this exact format:
 {
@@ -163,6 +170,7 @@ Return ONLY valid JSON in this exact format:
         "Gate": "gate number (flights)",
         "Terminal": "terminal (flights)",
         "Room": "room type (hotels)",
+        "Phone": "hotel front desk phone number with country code (hotels)",
         "Vehicle": "car type (rentals)",
         "any_other_key": "any other relevant detail"
       }
@@ -294,12 +302,60 @@ function isUnknownDestination(destination: string): boolean {
 }
 
 /**
+ * Check if a trip was previously deleted by the user.
+ * Uses fuzzy destination matching (same logic as trip merging) to catch variations.
+ * Returns true if a matching deleted trip is found.
+ */
+async function wasTripDeleted(
+  supabase: any,
+  userId: string,
+  destination: string,
+  country: string | undefined,
+  region: string | undefined,
+  startDate: string,
+  endDate: string
+): Promise<boolean> {
+  // Fetch all deleted trips for this user within a reasonable time window
+  // (±7 days buffer to catch slight date variations in different emails)
+  const bufferDays = 7;
+  const bufferedStart = new Date(startDate);
+  bufferedStart.setDate(bufferedStart.getDate() - bufferDays);
+  const bufferedEnd = new Date(endDate);
+  bufferedEnd.setDate(bufferedEnd.getDate() + bufferDays);
+  const bufferedStartStr = bufferedStart.toISOString().split('T')[0];
+  const bufferedEndStr = bufferedEnd.toISOString().split('T')[0];
+
+  const { data: deletedTrips } = await supabase
+    .from('deleted_trips')
+    .select('destination, start_date, end_date, original_trip_name')
+    .eq('user_id', userId)
+    .gte('end_date', bufferedStartStr)
+    .lte('start_date', bufferedEndStr);
+
+  if (!deletedTrips || deletedTrips.length === 0) {
+    return false;
+  }
+
+  // Check each deleted trip for geographic relatedness using the same fuzzy logic
+  for (const deleted of deletedTrips) {
+    if (areDestinationsRelated(destination, country, region, deleted.destination, deleted.original_trip_name || '')) {
+      console.log(`[Deleted Trip Match] "${destination}" matches previously deleted trip: "${deleted.original_trip_name}" (${deleted.destination})`);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Find an existing trip that matches the destination and overlapping dates,
  * or create a new one. Uses tiered matching:
  * 
  * Tier 1: Exact destination + overlapping dates
  * Tier 2: Fuzzy destination (same region/country) + overlapping/adjacent dates (±3 day buffer)
  * Tier 3: Unknown destination + overlapping dates → merge into the only matching trip
+ * 
+ * NEW: Checks deleted_trips table to prevent recreating trips the user has deleted.
  */
 async function findOrCreateTripForEmail(
   supabase: any,
@@ -359,6 +415,22 @@ async function findOrCreateTripForEmail(
     console.log(`[Tier 3] Unknown destination + single matching trip by date — using trip: ${trip.id} (${trip.name})`);
     await expandTripDates(supabase, trip, start_date, end_date);
     return trip.id;
+  }
+
+  // === Check if this trip was previously deleted by the user ===
+  const wasDeleted = await wasTripDeleted(
+    supabase,
+    userId,
+    destination,
+    country,
+    region,
+    start_date,
+    end_date
+  );
+
+  if (wasDeleted) {
+    console.log(`[Deleted Trip Block] User previously deleted a trip matching "${destination}" (${start_date} to ${end_date}) — skipping recreation`);
+    return null;
   }
 
   // === No match found — create new trip ===
@@ -525,6 +597,68 @@ async function isDuplicateReservation(
   return false;
 }
 
+/**
+ * Generate a stable hash for email deduplication.
+ * Uses sender + subject + first 500 chars of body to create a unique identifier.
+ */
+async function generateEmailHash(from: string, subject: string, body: string): Promise<string> {
+  const content = `${from}|${subject}|${body.substring(0, 500)}`;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(content);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return `email_${hashHex.substring(0, 32)}`;
+}
+
+/**
+ * Check if an email has already been processed (deduplication).
+ */
+async function isEmailProcessed(
+  supabase: any,
+  userId: string,
+  emailHash: string
+): Promise<boolean> {
+  try {
+    const { data } = await supabase
+      .from('processed_gmail_messages')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('gmail_message_id', emailHash)
+      .maybeSingle();
+
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mark an email as processed to prevent reprocessing.
+ */
+async function markEmailProcessed(
+  supabase: any,
+  userId: string,
+  emailHash: string,
+  status: string
+): Promise<void> {
+  try {
+    await supabase
+      .from('processed_gmail_messages')
+      .upsert(
+        {
+          user_id: userId,
+          gmail_message_id: emailHash,
+          status,
+          processed_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,gmail_message_id' }
+      );
+  } catch (error) {
+    console.warn(`Failed to mark email as processed:`, error);
+  }
+}
+
 serve(async (req) => {
   try {
     // CORS headers
@@ -562,6 +696,8 @@ serve(async (req) => {
 
     const recipientEmail = emailData.to || emailData.recipient || '';
     const emailText = emailData.text || emailData.html || '';
+    const emailFrom = emailData.from || '';
+    const emailSubject = emailData.subject || '';
 
     if (!recipientEmail || !emailText) {
       throw new Error('Missing recipient or email content');
@@ -623,8 +759,45 @@ serve(async (req) => {
     const userId = profile.id;
     console.log('Processing for user:', userId);
 
+    // 1b. Check if this email has already been processed (deduplication)
+    const emailHash = await generateEmailHash(emailFrom, emailSubject, emailText);
+    const alreadyProcessed = await isEmailProcessed(supabase, userId, emailHash);
+    
+    if (alreadyProcessed) {
+      console.log('Email already processed (hash:', emailHash, ') — skipping');
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Email already processed',
+          skipped: true,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    console.log('Email hash:', emailHash, '— processing');
+
+    // 1c. Fetch user's existing trips for AI context (helps with trip matching)
+    const { data: existingTrips } = await supabase
+      .from('trips')
+      .select('name, destination, start_date, end_date')
+      .eq('user_id', userId)
+      .gte('end_date', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]) // Last 30 days or future
+      .order('start_date', { ascending: true })
+      .limit(10);
+
+    let existingTripsContext = '';
+    if (existingTrips && existingTrips.length > 0) {
+      existingTripsContext = `- The user already has these trips:\n${existingTrips.map(t => 
+        `  * "${t.name}" to ${t.destination} (${t.start_date} to ${t.end_date})`
+      ).join('\n')}\n- If this email is about one of these existing trips, use the same destination and trip name`;
+    }
+
     // 2. Parse email with AI
-    const parsedRaw = await parseEmailWithAI(emailText);
+    const parsedRaw = await parseEmailWithAI(emailText, existingTripsContext);
     
     // 2b. Validate and correct dates (handles AI hallucinations like Feb 29 in non-leap years)
     const parsed = validateParsedTripDates(parsedRaw);
@@ -634,7 +807,21 @@ serve(async (req) => {
     const tripId = await findOrCreateTripForEmail(supabase, userId, parsed);
 
     if (!tripId) {
-      throw new Error('Failed to find or create trip');
+      // Trip was blocked (user previously deleted it) — return success without creating anything
+      console.log('[Deleted Trip Block] Trip creation blocked — user previously deleted this trip');
+      await markEmailProcessed(supabase, userId, emailHash, 'skipped_deleted_trip');
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Email processed but trip creation was blocked (previously deleted)',
+          skipped: true,
+          reason: 'deleted_trip',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
     console.log('Using trip:', tripId);
@@ -706,7 +893,27 @@ serve(async (req) => {
 
     console.log(`Processed ${totalProcessed} reservations (${reservationsCreated} created, ${cancellationsUpdated} cancellations updated, ${duplicatesSkipped} duplicates skipped)`);
 
-    // 4b. If cancellations were processed, check if ALL reservations in the trip are now cancelled.
+    // 4b. If NO reservations were actually created/updated, delete the trip if it was just created
+    //     This prevents empty ghost trips from accumulating when duplicate emails arrive
+    if (totalProcessed === 0 && reservationsCreated === 0 && cancellationsUpdated === 0) {
+      // Check if this trip has any reservations at all
+      const { data: tripReservations } = await supabase
+        .from('reservations')
+        .select('id')
+        .eq('trip_id', tripId)
+        .limit(1);
+
+      if (!tripReservations || tripReservations.length === 0) {
+        // Empty trip — delete it
+        await supabase
+          .from('trips')
+          .delete()
+          .eq('id', tripId);
+        console.log(`Deleted empty trip ${tripId} (all reservations were duplicates)`);
+      }
+    }
+
+    // 4c. If cancellations were processed, check if ALL reservations in the trip are now cancelled.
     //     If so, mark the trip as 'completed' so it moves to Past Trips.
     if (cancellationsUpdated > 0) {
       const { data: allReservations } = await supabase
@@ -726,28 +933,50 @@ serve(async (req) => {
       }
     }
 
-    // 5. Send push notification (if user has push token)
-    const { data: userProfile } = await supabase
-      .from('profiles')
-      .select('push_token')
-      .eq('id', userId)
-      .single();
+    // 5. Send push notification AND create in-app notification ONLY if something new was actually added
+    if (totalProcessed > 0) {
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('push_token')
+        .eq('id', userId)
+        .single();
 
-    if (userProfile?.push_token) {
-      // Send Expo push notification
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: userProfile.push_token,
+      // Send iOS push notification
+      if (userProfile?.push_token) {
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            to: userProfile.push_token,
+            title: '✈️ New Trip Added!',
+            body: `${parsed.trip_name} has been added with ${totalProcessed} reservation(s).`,
+            data: { tripId },
+          }),
+        });
+        console.log('Push notification sent');
+      }
+
+      // Create in-app notification
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: userId,
+          type: 'confirmation',
           title: '✈️ New Trip Added!',
-          body: `${parsed.trip_name} has been added with ${totalProcessed} reservation(s).`,
-          data: { tripId },
-        }),
-      });
+          message: `${parsed.trip_name} has been added with ${totalProcessed} reservation(s).`,
+          trip_id: tripId,
+          reservation_id: null,
+          read: false,
+        });
+      console.log('In-app notification created');
+    } else {
+      console.log('No new reservations — skipping notifications');
     }
+
+    // 5b. Mark email as processed to prevent reprocessing
+    await markEmailProcessed(supabase, userId, emailHash, 'processed');
 
     // 6. Return success
     return new Response(

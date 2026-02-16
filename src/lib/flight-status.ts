@@ -141,24 +141,30 @@ export function getPollingInterval(
     return null;
   }
 
-  // If we have an arrival time and it's in the past by more than 2 hours, stop
-  if (arrivalTime) {
-    const timeSinceLanding = now.getTime() - arrivalTime.getTime();
-    if (timeSinceLanding > 2 * 60 * 60 * 1000) {
-      return null;
-    }
-  }
-
   const msUntilDeparture = departureTime.getTime() - now.getTime();
   const hoursUntilDeparture = msUntilDeparture / (1000 * 60 * 60);
 
   // Flight is active (in the air) — poll every 5 minutes
+  // IMPORTANT: Keep polling even if past ETA — we need to catch the "landed" status
   if (flightStatus === 'active') {
+    // If we have an arrival time and it's WAY past (>3 hours), stop
+    // (likely a data gap, not still flying)
+    if (arrivalTime) {
+      const timeSinceETA = now.getTime() - arrivalTime.getTime();
+      if (timeSinceETA > 3 * 60 * 60 * 1000) {
+        return null;
+      }
+    }
     return 5 * 60 * 1000;
   }
 
   // Already departed (but we don't have 'active' status) — poll every 5 minutes
+  // Keep polling until we get confirmation of landing or it's been >24h since departure
   if (hoursUntilDeparture < 0) {
+    // Stop if it's been more than 24 hours since departure (longest commercial flight ~20h)
+    if (hoursUntilDeparture < -24) {
+      return null;
+    }
     return 5 * 60 * 1000;
   }
 
@@ -429,8 +435,9 @@ export function inferFlightPhase(status: FlightStatusData): FlightPhase {
     const landingDeadline = estimatedDurationMs + 60 * 60 * 1000;
 
     if (timeSinceDeparture > landingDeadline) {
-      // Way past when it should have landed — data gap, not still flying
-      return 'unknown';
+      // Way past when it should have landed — almost certainly landed
+      // (API data gap or we stopped polling too early)
+      return 'landed';
     }
 
     // Flight departed and within reasonable flight window → in flight

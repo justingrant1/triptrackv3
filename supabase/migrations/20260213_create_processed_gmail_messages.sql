@@ -22,25 +22,31 @@ CREATE INDEX IF NOT EXISTS idx_processed_gmail_processed_at
 ALTER TABLE processed_gmail_messages ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Users can only see their own processed messages
-CREATE POLICY "Users can view own processed messages"
-  ON processed_gmail_messages
-  FOR SELECT
-  USING (auth.uid() = user_id);
+DO $$ BEGIN
+  CREATE POLICY "Users can view own processed messages"
+    ON processed_gmail_messages
+    FOR SELECT
+    USING (auth.uid() = user_id);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Policy: Users can insert their own processed messages
-CREATE POLICY "Users can insert own processed messages"
-  ON processed_gmail_messages
-  FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+DO $$ BEGIN
+  CREATE POLICY "Users can insert own processed messages"
+    ON processed_gmail_messages
+    FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
--- Policy: Users can update their own processed messages
-CREATE POLICY "Users can update own processed messages"
-  ON processed_gmail_messages
-  FOR UPDATE
-  USING (auth.uid() = user_id);
-
--- Policy: Users can delete their own processed messages
-CREATE POLICY "Users can delete own processed messages"
-  ON processed_gmail_messages
-  FOR DELETE
-  USING (auth.uid() = user_id);
+-- Policy: Users can delete their own processed messages (for cleanup)
+DO $$ BEGIN
+  CREATE POLICY "Users can delete own processed messages"
+    ON processed_gmail_messages
+    FOR DELETE
+    USING (auth.uid() = user_id);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;

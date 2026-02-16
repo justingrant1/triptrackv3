@@ -861,7 +861,7 @@ Return JSON in this format:
       "confirmation_number": "Booking/confirmation number or null (same for all legs if shared)",
       "details": {
         // For flights: "Airline", "Flight Number", "Departure Airport", "Arrival Airport", "Duration" (e.g. "11h 55m" — REQUIRED, calculate from times + timezone difference), "Departure Timezone" (UTC offset e.g. "-08:00" — REQUIRED for flights), "Arrival Timezone" (UTC offset e.g. "+09:00" — REQUIRED for flights), "Seat", "Class", "Gate", "Terminal", "Baggage"
-        // For hotels: "Hotel Name", "Room Type", "Nights", "Check-in Time", "Check-out Time", "Guest Name"
+        // For hotels: "Hotel Name", "Room Type", "Nights", "Check-in Time", "Check-out Time", "Guest Name", "Phone" (hotel front desk phone number with country code)
         // For car rentals: "Company", "Car Type", "Pickup Location", "Dropoff Location", "Pickup Time", "Dropoff Time"
         // For trains: "Train Number", "Departure Station", "Arrival Station", "Seat", "Car Number"
         // For cruises: "Ship Name", "Cabin", "Embarkation Port", "Disembarkation Port"
@@ -1171,6 +1171,52 @@ function areDestinationsRelated(
 }
 
 /**
+ * Check if a trip was previously deleted by the user.
+ * Uses fuzzy destination matching (same logic as trip merging) to catch variations.
+ * Returns true if a matching deleted trip is found.
+ */
+async function wasTripDeleted(
+  supabase: any,
+  userId: string,
+  destination: string,
+  country: string | null,
+  region: string | null,
+  startDate: string,
+  endDate: string
+): Promise<boolean> {
+  // Fetch all deleted trips for this user within a reasonable time window
+  // (±7 days buffer to catch slight date variations in different emails)
+  const bufferDays = 7;
+  const bufferedStart = new Date(startDate);
+  bufferedStart.setDate(bufferedStart.getDate() - bufferDays);
+  const bufferedEnd = new Date(endDate);
+  bufferedEnd.setDate(bufferedEnd.getDate() + bufferDays);
+  const bufferedStartStr = bufferedStart.toISOString().split('T')[0];
+  const bufferedEndStr = bufferedEnd.toISOString().split('T')[0];
+
+  const { data: deletedTrips } = await supabase
+    .from('deleted_trips')
+    .select('destination, start_date, end_date, original_trip_name')
+    .eq('user_id', userId)
+    .gte('end_date', bufferedStartStr)
+    .lte('start_date', bufferedEndStr);
+
+  if (!deletedTrips || deletedTrips.length === 0) {
+    return false;
+  }
+
+  // Check each deleted trip for geographic relatedness using the same fuzzy logic
+  for (const deleted of deletedTrips) {
+    if (areDestinationsRelated(destination, country, region, deleted.destination, deleted.original_trip_name || '')) {
+      console.log(`[Deleted Trip Match] "${destination}" matches previously deleted trip: "${deleted.original_trip_name}" (${deleted.destination})`);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Find an existing trip that matches the destination and overlapping dates,
  * or create a new one. Uses tiered matching:
  * 
@@ -1178,6 +1224,8 @@ function areDestinationsRelated(
  * Tier 2: Fuzzy destination (same region/country) + overlapping/adjacent dates (±3 day buffer)
  * 
  * Also expands trip dates if the new reservation extends beyond the existing trip's date range.
+ * 
+ * NEW: Checks deleted_trips table to prevent recreating trips the user has deleted.
  */
 async function findOrCreateTrip(
   supabase: any,
@@ -1258,6 +1306,22 @@ async function findOrCreateTrip(
         return await expandTripDatesAndReturn(supabase, trip, trip_dates);
       }
     }
+  }
+
+  // === Check if this trip was previously deleted by the user ===
+  const wasDeleted = await wasTripDeleted(
+    supabase,
+    userId,
+    destination,
+    country,
+    region,
+    trip_dates.start,
+    trip_dates.end
+  );
+
+  if (wasDeleted) {
+    console.log(`[Deleted Trip Block] User previously deleted a trip matching "${destination}" (${trip_dates.start} to ${trip_dates.end}) — skipping recreation`);
+    return null;
   }
 
   // === No match found — create new trip ===
@@ -2168,6 +2232,57 @@ serve(async (req) => {
         stats.errors++;
         // Continue with next message
       }
+    }
+
+    // Send push notification AND create in-app notification if new content was added
+    const totalCreated = stats.tripsCreated + stats.reservationsCreated;
+    if (totalCreated > 0) {
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('push_token')
+        .eq('id', user.id)
+        .single();
+
+      // Send iOS push notification
+      if (userProfile?.push_token) {
+        const message = stats.tripsCreated > 0
+          ? `${stats.tripsCreated} trip(s) and ${stats.reservationsCreated} reservation(s) added from Gmail`
+          : `${stats.reservationsCreated} reservation(s) added to your trips`;
+
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            to: userProfile.push_token,
+            title: '✈️ Gmail Sync Complete!',
+            body: message,
+            data: { tripsCreated: stats.tripsCreated, reservationsCreated: stats.reservationsCreated },
+          }),
+        });
+        console.log('Push notification sent');
+      }
+
+      // Create in-app notification
+      const notificationMessage = stats.tripsCreated > 0
+        ? `Gmail sync complete: ${stats.tripsCreated} trip(s) and ${stats.reservationsCreated} reservation(s) added`
+        : `Gmail sync complete: ${stats.reservationsCreated} reservation(s) added to your trips`;
+
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: user.id,
+          type: 'trip_summary',
+          title: '✈️ Gmail Sync Complete!',
+          message: notificationMessage,
+          trip_id: null,
+          reservation_id: null,
+          read: false,
+        });
+      console.log('In-app notification created');
+    } else {
+      console.log('No new content created — skipping notifications');
     }
 
     // Return detailed stats
