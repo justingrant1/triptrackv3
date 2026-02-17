@@ -163,6 +163,10 @@ Return ONLY valid JSON in this exact format:
       "confirmation_number": "Confirmation/booking number",
       "status": "confirmed" or "cancelled" (use "cancelled" ONLY if the email is explicitly a cancellation notice),
       "details": {
+        "Flight Number": "flight number like 'AA 1234' or 'UA 567' — REQUIRED for flights",
+        "Airline": "full airline name like 'American Airlines' or 'United Airlines' — REQUIRED for flights",
+        "Departure Airport": "departure airport name with code like 'Miami International Airport (MIA)' — REQUIRED for flights",
+        "Arrival Airport": "arrival airport name with code like 'George Bush Intercontinental Airport (IAH)' — REQUIRED for flights",
         "Duration": "flight duration as 'Xh Ym' (e.g. '11h 55m') — REQUIRED for flights, calculate from departure/arrival times and timezone difference",
         "Departure Timezone": "UTC offset of departure location as '+HH:MM' or '-HH:MM' (e.g. '-08:00' for LAX, '+09:00' for NRT) — REQUIRED for flights",
         "Arrival Timezone": "UTC offset of arrival location as '+HH:MM' or '-HH:MM' (e.g. '+09:00' for NRT, '-05:00' for JFK) — REQUIRED for flights",

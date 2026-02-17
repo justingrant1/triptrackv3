@@ -161,8 +161,9 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
         )}
 
         {/* Flight details — grouped: departure → arrival → personal */}
-        <DetailRow label="Flight" value={liveFlightStatus?.flight_iata || d['Flight Number'] || d['Flight']} mono />
-        <DetailRow label="Airline" value={liveFlightStatus?.airline_name || d['Airline']} />
+        {/* Fall back to title (e.g., "AA 7844") and subtitle (e.g., "Operated by JetSMART") when details keys are missing */}
+        <DetailRow label="Flight" value={liveFlightStatus?.flight_iata || d['Flight Number'] || d['Flight'] || reservation.title} mono />
+        <DetailRow label="Airline" value={liveFlightStatus?.airline_name || d['Airline'] || d['Operated by'] || (reservation.subtitle ? reservation.subtitle.replace(/^Operated by\s+/i, '').split(' · ')[0] : null)} />
 
         {/* Departure info */}
         <DetailRow label="Dep. Gate" value={liveFlightStatus?.dep_gate || d['Gate']} mono />
