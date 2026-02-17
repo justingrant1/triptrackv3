@@ -60,6 +60,8 @@ export function useUpcomingTrips() {
       if (error) throw error;
       return data as Trip[];
     },
+    // Upcoming trips are time-sensitive — refresh more often than the global default
+    staleTime: 1000 * 60 * 2, // 2 minutes
   });
 }
 

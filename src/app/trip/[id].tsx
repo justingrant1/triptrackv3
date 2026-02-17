@@ -32,7 +32,7 @@ import Animated, {
   withSpring,
   interpolate,
   useAnimatedScrollHandler,
-  Extrapolate,
+  Extrapolation,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -106,7 +106,7 @@ function getFlightLiveStatus(status: FlightStatusData): LiveStatus {
 type ReservationType = Reservation['type'];
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const HEADER_HEIGHT = 280;
+const HEADER_HEIGHT = 320;
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedSectionList = Animated.createAnimatedComponent(SectionList<Reservation>);
@@ -657,23 +657,44 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
       entering={FadeInRight.duration(400).delay(index * 80)}
       className="flex-row"
     >
-      {/* Timeline */}
+      {/* Timeline — with ambient glow */}
       <View className="w-12 items-center">
         <View
-          className={`w-0.5 flex-1 ${isFirst ? 'bg-transparent' : 'bg-slate-700'}`}
+          className={`w-0.5 flex-1 ${isFirst ? 'bg-transparent' : 'bg-slate-700/60'}`}
           style={{ marginBottom: -12 }}
         />
+        <View style={{ position: 'relative' }}>
+          {/* Glow ring */}
+          {!isCancelled && (
+            <View
+              style={{
+                position: 'absolute',
+                top: -3,
+                left: -3,
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                backgroundColor: typeColor + '25',
+              }}
+            />
+          )}
+          <View
+            style={{
+              backgroundColor: isCancelled ? '#EF4444' : typeColor,
+              width: 12,
+              height: 12,
+              borderRadius: 6,
+              opacity: isCancelled ? 0.6 : 1,
+              shadowColor: isCancelled ? '#EF4444' : typeColor,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: isCancelled ? 0 : 0.5,
+              shadowRadius: 6,
+              elevation: isCancelled ? 0 : 4,
+            }}
+          />
+        </View>
         <View
-          style={{
-            backgroundColor: isCancelled ? '#EF4444' : typeColor,
-            width: 12,
-            height: 12,
-            borderRadius: 6,
-            opacity: isCancelled ? 0.6 : 1,
-          }}
-        />
-        <View
-          className={`w-0.5 flex-1 ${isLast ? 'bg-transparent' : 'bg-slate-700'}`}
+          className={`w-0.5 flex-1 ${isLast ? 'bg-transparent' : 'bg-slate-700/60'}`}
           style={{ marginTop: -12 }}
         />
       </View>
@@ -972,14 +993,14 @@ function TripDetailScreenContent() {
   });
 
   const headerAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [0, 150], [1, 0], Extrapolate.CLAMP),
+    opacity: interpolate(scrollY.value, [0, 150], [1, 0], Extrapolation.CLAMP),
     transform: [
-      { scale: interpolate(scrollY.value, [-100, 0], [1.2, 1], Extrapolate.CLAMP) },
+      { scale: interpolate(scrollY.value, [-100, 0], [1.2, 1], Extrapolation.CLAMP) },
     ],
   }));
 
   const titleAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [100, 180], [0, 1], Extrapolate.CLAMP),
+    opacity: interpolate(scrollY.value, [100, 180], [0, 1], Extrapolation.CLAMP),
   }));
 
   if (isLoading) {
@@ -1180,61 +1201,84 @@ function TripDetailScreenContent() {
         ListHeaderComponent={() => (
           <View className="px-5 pb-6">
             <Pressable onLongPress={handleDeleteTrip}>
-              <Text className="text-white text-3xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+              <Text className="text-white text-4xl font-bold" style={{ fontFamily: 'DMSans_700Bold', letterSpacing: -0.5 }}>
                 {trip.name}
               </Text>
             </Pressable>
-            <View className="flex-row items-center mt-2">
-              <MapPin size={16} color="#94A3B8" />
-              <Text className="text-slate-400 text-base ml-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-                {trip.destination}
-              </Text>
-              {trip.status !== 'completed' && (
-                <Text className="text-slate-500 text-base ml-1.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                  · {weather?.temperature ?? '--'}° {weather && getWeatherIcon(weather.condition)}
-                </Text>
-              )}
-            </View>
-            <Text className="text-slate-500 text-sm mt-1" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-              {formatDateLong(parseDateOnly(trip.start_date))} - {formatDateLong(parseDateOnly(trip.end_date))}
-            </Text>
 
-            {/* Expense Summary Card */}
+            {/* Info pills row */}
+            <View className="flex-row flex-wrap items-center mt-3 gap-2">
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(30,41,59,0.7)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(51,65,85,0.5)' }}>
+                <MapPin size={14} color="#94A3B8" />
+                <Text className="text-slate-300 text-sm ml-1.5" style={{ fontFamily: 'DMSans_500Medium' }}>
+                  {trip.destination}
+                </Text>
+              </View>
+              {trip.status !== 'completed' && weather && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(30,41,59,0.7)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(51,65,85,0.5)' }}>
+                  <Text className="text-slate-300 text-sm" style={{ fontFamily: 'DMSans_500Medium' }}>
+                    {weather.temperature}° {getWeatherIcon(weather.condition)}
+                  </Text>
+                </View>
+              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(30,41,59,0.7)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(51,65,85,0.5)' }}>
+                <Clock size={14} color="#64748B" />
+                <Text className="text-slate-400 text-xs ml-1.5" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                  {formatDateLong(parseDateOnly(trip.start_date))} – {formatDateLong(parseDateOnly(trip.end_date))}
+                </Text>
+              </View>
+            </View>
+
+            {/* Expense Summary Card — upgraded with gradient accent */}
             {expenses && expenses.total > 0 && (
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   router.push('/(tabs)/receipts');
                 }}
-                className="mt-4 bg-slate-800/50 rounded-2xl p-4 border border-slate-700/50 flex-row items-center"
+                style={{ marginTop: 16, borderRadius: 20, overflow: 'hidden' }}
               >
-                <View className="bg-emerald-500/20 p-2.5 rounded-xl">
-                  <DollarSign size={20} color="#10B981" />
-                </View>
-                <View className="flex-1 ml-3">
-                  <Text className="text-white text-lg font-bold" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-                    {formatCurrency(expenses.total)}
-                  </Text>
-                  <Text className="text-slate-400 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                    {expenses.count} receipt{expenses.count !== 1 ? 's' : ''}
-                    {expenses.byCategory && Object.keys(expenses.byCategory).length > 0 && (
-                      ` · ${Object.entries(expenses.byCategory).map(([cat, amt]) => `${cat} ${formatCurrency(amt as number)}`).join(', ')}`
-                    )}
-                  </Text>
-                </View>
-                <Receipt size={16} color="#64748B" />
+                <LinearGradient
+                  colors={['rgba(16,185,129,0.08)', 'rgba(16,185,129,0.02)']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={{ padding: 16, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(16,185,129,0.15)', flexDirection: 'row', alignItems: 'center' }}
+                >
+                  <View style={{ backgroundColor: 'rgba(16,185,129,0.15)', padding: 10, borderRadius: 14 }}>
+                    <DollarSign size={20} color="#10B981" />
+                  </View>
+                  <View className="flex-1 ml-3">
+                    <Text className="text-white text-lg font-bold" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+                      {formatCurrency(expenses.total)}
+                    </Text>
+                    <Text className="text-slate-400 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      {expenses.count} receipt{expenses.count !== 1 ? 's' : ''}
+                      {expenses.byCategory && Object.keys(expenses.byCategory).length > 0 && (
+                        ` · ${Object.entries(expenses.byCategory).map(([cat, amt]) => `${cat} ${formatCurrency(amt as number)}`).join(', ')}`
+                      )}
+                    </Text>
+                  </View>
+                  <Receipt size={16} color="#64748B" />
+                </LinearGradient>
               </Pressable>
             )}
           </View>
         )}
         renderSectionHeader={({ section }) => (
-          <View className="px-5 pt-2 pb-4 bg-slate-950">
-            <Text
-              className="text-slate-300 text-sm font-semibold uppercase tracking-wider"
-              style={{ fontFamily: 'SpaceMono_400Regular' }}
-            >
-              {section.title}
-            </Text>
+          <View className="px-5 pt-3 pb-4 bg-slate-950">
+            <View className="flex-row items-center">
+              <View style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#3B82F6', marginRight: 10 }} />
+              <Text
+                className="text-slate-200 text-sm font-semibold uppercase tracking-wider"
+                style={{ fontFamily: 'SpaceMono_400Regular' }}
+              >
+                {section.title}
+              </Text>
+              <View style={{ backgroundColor: 'rgba(59,130,246,0.12)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginLeft: 8 }}>
+                <Text style={{ color: '#60A5FA', fontSize: 11, fontFamily: 'DMSans_700Bold' }}>{section.data.length}</Text>
+              </View>
+              <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(51,65,85,0.4)', marginLeft: 12 }} />
+            </View>
           </View>
         )}
         renderItem={({ item, index, section }) => (

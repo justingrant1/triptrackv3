@@ -18,7 +18,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   interpolate,
-  Extrapolate,
+  Extrapolation,
   useAnimatedScrollHandler,
   withRepeat,
   withTiming,
@@ -413,7 +413,7 @@ function AssistantSlide() {
 
 // ─── Slide Renderer ──────────────────────────────────────────
 
-function SlideContent({ item, index, scrollX }: { item: OnboardingSlide; index: number; scrollX: Animated.SharedValue<number> }) {
+function SlideContent({ item, index, scrollX }: { item: OnboardingSlide; index: number; scrollX: { value: number } }) {
   const animatedStyle = useAnimatedStyle(() => {
     const inputRange = [
       (index - 1) * SCREEN_WIDTH,
@@ -421,9 +421,9 @@ function SlideContent({ item, index, scrollX }: { item: OnboardingSlide; index: 
       (index + 1) * SCREEN_WIDTH,
     ];
 
-    const scale = interpolate(scrollX.value, inputRange, [0.85, 1, 0.85], Extrapolate.CLAMP);
-    const opacity = interpolate(scrollX.value, inputRange, [0, 1, 0], Extrapolate.CLAMP);
-    const translateY = interpolate(scrollX.value, inputRange, [30, 0, 30], Extrapolate.CLAMP);
+    const scale = interpolate(scrollX.value, inputRange, [0.85, 1, 0.85], Extrapolation.CLAMP);
+    const opacity = interpolate(scrollX.value, inputRange, [0, 1, 0], Extrapolation.CLAMP);
+    const translateY = interpolate(scrollX.value, inputRange, [30, 0, 30], Extrapolation.CLAMP);
 
     return {
       transform: [{ scale }, { translateY }],
@@ -445,7 +445,7 @@ function SlideContent({ item, index, scrollX }: { item: OnboardingSlide; index: 
 
 // ─── Paginator ───────────────────────────────────────────────
 
-function Paginator({ data, scrollX }: { data: OnboardingSlide[]; scrollX: Animated.SharedValue<number> }) {
+function Paginator({ data, scrollX }: { data: OnboardingSlide[]; scrollX: { value: number } }) {
   return (
     <View className="flex-row justify-center items-center mb-6">
       {data.map((_, index) => {
@@ -456,9 +456,9 @@ function Paginator({ data, scrollX }: { data: OnboardingSlide[]; scrollX: Animat
             (index + 1) * SCREEN_WIDTH,
           ];
 
-          const width = interpolate(scrollX.value, inputRange, [8, 28, 8], Extrapolate.CLAMP);
-          const opacity = interpolate(scrollX.value, inputRange, [0.25, 1, 0.25], Extrapolate.CLAMP);
-          const bgOpacity = interpolate(scrollX.value, inputRange, [0.3, 1, 0.3], Extrapolate.CLAMP);
+          const width = interpolate(scrollX.value, inputRange, [8, 28, 8], Extrapolation.CLAMP);
+          const opacity = interpolate(scrollX.value, inputRange, [0.25, 1, 0.25], Extrapolation.CLAMP);
+          const bgOpacity = interpolate(scrollX.value, inputRange, [0.3, 1, 0.3], Extrapolation.CLAMP);
 
           return { width, opacity: bgOpacity };
         });

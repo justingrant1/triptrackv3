@@ -3,7 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from '@/lib/useColorScheme';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, focusManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@/lib/query-persister';
 import { isAuthError } from '@/lib/error-utils';
@@ -11,7 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import React, { useEffect, useRef } from 'react';
 import { useAuthStore } from '@/lib/state/auth-store';
-import { View, ActivityIndicator, Text } from 'react-native';
+import { View, ActivityIndicator, Text, AppState, Platform } from 'react-native';
 import { useFonts } from 'expo-font';
 import {
   DMSans_400Regular,
@@ -33,6 +33,18 @@ export const unstable_settings = {
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
+
+// ─── React Query ↔ React Native AppState Bridge ─────────────────────────────
+// React Query's refetchOnWindowFocus only works on web. For React Native, we
+// connect AppState so that when the user returns from background (e.g., after
+// checking a notification, switching apps), all stale queries silently refetch.
+// This makes the app feel "always fresh" without any pull-to-refresh needed.
+function onAppStateChange(status: string) {
+  if (Platform.OS !== 'web') {
+    focusManager.setFocused(status === 'active');
+  }
+}
+AppState.addEventListener('change', onAppStateChange);
 
 // Configure React Query for offline-first behavior
 const queryClient = new QueryClient({
@@ -192,11 +204,15 @@ function RootLayoutNav({
       }
     );
 
-    // Foreground notification received — just log it (the banner shows automatically
-    // because of setNotificationHandler in notifications.ts)
+    // Foreground notification received — refresh data silently so the UI updates
+    // immediately when a flight status change or new trip notification arrives
     const receivedSubscription = Notifications.addNotificationReceivedListener(
       (notification) => {
         console.log('[Push] Foreground notification:', notification.request.content.title);
+        // Silently invalidate trip/reservation queries so fresh data loads in background
+        queryClient.invalidateQueries({ queryKey: ['trips'] });
+        queryClient.invalidateQueries({ queryKey: ['reservations'] });
+        queryClient.invalidateQueries({ queryKey: ['notifications'] });
       }
     );
 

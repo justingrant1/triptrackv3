@@ -398,17 +398,32 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
       {/* Swipeable Card */}
       <GestureDetector gesture={composedGesture}>
         <Animated.View style={animatedStyle}>
-          <View className="rounded-3xl overflow-hidden" style={{ width: CARD_WIDTH }}>
-            {/* Cover Image */}
-            <View className="h-44 relative">
+          <View
+            style={{
+              width: CARD_WIDTH,
+              borderRadius: 28,
+              overflow: 'hidden',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.08)',
+              shadowColor: isActive ? '#10B981' : '#3B82F6',
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.15,
+              shadowRadius: 24,
+              elevation: 8,
+            }}
+          >
+            {/* Cover Image — taller for cinematic feel */}
+            <View style={{ height: 208, position: 'relative' }}>
               <Image
                 source={{ uri: trip.cover_image ?? 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=800' }}
                 className="w-full h-full"
                 resizeMode="cover"
               />
+              {/* 3-stop cinematic gradient */}
               <LinearGradient
-                colors={['transparent', 'rgba(0,0,0,0.8)']}
-                style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 100 }}
+                colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.88)']}
+                locations={[0, 0.5, 1]}
+                style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 140 }}
               />
 
               {/* Status Badge */}
@@ -417,90 +432,103 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
               </View>
 
               {/* Trip Info Overlay */}
-              <View className="absolute bottom-4 left-4 right-4">
-                <Text className="text-white text-xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+              <View className="absolute bottom-4 left-5 right-5">
+                <Text className="text-white text-xl font-bold" style={{ fontFamily: 'DMSans_700Bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 }}>
                   {trip.name}
                 </Text>
-                <View className="flex-row items-center mt-1">
-                  <MapPin size={14} color="#94A3B8" />
-                  <Text className="text-slate-300 text-sm ml-1" style={{ fontFamily: 'DMSans_400Regular' }}>
+                <View className="flex-row items-center mt-1.5">
+                  <MapPin size={14} color="#CBD5E1" />
+                  <Text className="text-slate-200 text-sm ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
                     {trip.destination}
                   </Text>
                   {(isActive || isUpcoming) && weather && (
-                    <Text className="text-slate-400 text-sm ml-1.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                      · {weather.temperature}° {getWeatherIcon(weather.condition)}
-                    </Text>
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginLeft: 8, flexDirection: 'row', alignItems: 'center' }}>
+                      <Text className="text-white text-xs" style={{ fontFamily: 'DMSans_500Medium' }}>
+                        {weather.temperature}° {getWeatherIcon(weather.condition)}
+                      </Text>
+                    </View>
                   )}
                 </View>
               </View>
             </View>
 
-            {/* Bottom Section - Date and Badges */}
-            <View className="bg-slate-800/90 px-4 py-3 flex-row items-center justify-between">
+            {/* Bottom Section — glassmorphic bar */}
+            <View
+              style={{
+                backgroundColor: 'rgba(15,23,42,0.85)',
+                paddingHorizontal: 16,
+                paddingVertical: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderTopWidth: 1,
+                borderTopColor: 'rgba(255,255,255,0.06)',
+              }}
+            >
               <View className="flex-row items-center">
                 <Calendar size={14} color="#64748B" />
                 <Text className="text-slate-400 text-sm ml-1.5" style={{ fontFamily: 'DMSans_500Medium' }}>
                   {formatDateRange(parseDateOnly(trip.start_date), parseDateOnly(trip.end_date))}
                 </Text>
               </View>
-              <View className="flex-row items-center gap-3">
-                {/* Reservation Count Badges */}
+              <View className="flex-row items-center gap-2">
+                {/* Reservation Count Pill Badges */}
                 {reservationCounts && (
                   <>
                     {reservationCounts.flight > 0 && (
-                      <View className="flex-row items-center">
-                        <Plane size={14} color="#64748B" />
-                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(59,130,246,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+                        <Plane size={12} color="#60A5FA" />
+                        <Text style={{ color: '#60A5FA', fontSize: 11, marginLeft: 4, fontFamily: 'DMSans_700Bold' }}>
                           {reservationCounts.flight}
                         </Text>
                       </View>
                     )}
                     {reservationCounts.hotel > 0 && (
-                      <View className="flex-row items-center">
-                        <Building2 size={14} color="#64748B" />
-                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(139,92,246,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+                        <Building2 size={12} color="#A78BFA" />
+                        <Text style={{ color: '#A78BFA', fontSize: 11, marginLeft: 4, fontFamily: 'DMSans_700Bold' }}>
                           {reservationCounts.hotel}
                         </Text>
                       </View>
                     )}
                     {reservationCounts.car > 0 && (
-                      <View className="flex-row items-center">
-                        <Car size={14} color="#64748B" />
-                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(16,185,129,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+                        <Car size={12} color="#34D399" />
+                        <Text style={{ color: '#34D399', fontSize: 11, marginLeft: 4, fontFamily: 'DMSans_700Bold' }}>
                           {reservationCounts.car}
                         </Text>
                       </View>
                     )}
                     {reservationCounts.train > 0 && (
-                      <View className="flex-row items-center">
-                        <Train size={14} color="#64748B" />
-                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(245,158,11,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+                        <Train size={12} color="#FBBF24" />
+                        <Text style={{ color: '#FBBF24', fontSize: 11, marginLeft: 4, fontFamily: 'DMSans_700Bold' }}>
                           {reservationCounts.train}
                         </Text>
                       </View>
                     )}
                     {reservationCounts.event > 0 && (
-                      <View className="flex-row items-center">
-                        <Ticket size={14} color="#64748B" />
-                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(6,182,212,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+                        <Ticket size={12} color="#22D3EE" />
+                        <Text style={{ color: '#22D3EE', fontSize: 11, marginLeft: 4, fontFamily: 'DMSans_700Bold' }}>
                           {reservationCounts.event}
                         </Text>
                       </View>
                     )}
                     {reservationCounts.meeting > 0 && (
-                      <View className="flex-row items-center">
-                        <Users size={14} color="#64748B" />
-                        <Text className="text-slate-400 text-xs ml-1" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(236,72,153,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+                        <Users size={12} color="#F472B6" />
+                        <Text style={{ color: '#F472B6', fontSize: 11, marginLeft: 4, fontFamily: 'DMSans_700Bold' }}>
                           {reservationCounts.meeting}
                         </Text>
                       </View>
                     )}
                   </>
                 )}
-                <ChevronRight size={16} color="#64748B" />
+                <ChevronRight size={16} color="#475569" />
               </View>
             </View>
-            </View>
+          </View>
         </Animated.View>
       </GestureDetector>
     </Animated.View>
@@ -925,12 +953,23 @@ export default function TripsScreen() {
           >
             <View className="flex-row items-center justify-between mb-4">
               <View className="flex-1">
-                <Text className="text-white text-2xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                <Text className="text-white text-3xl font-bold" style={{ fontFamily: 'DMSans_700Bold', letterSpacing: -0.5 }}>
                   Your Trips
                 </Text>
-                <Text className="text-slate-400 text-sm mt-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-                  {featuredTrips.length} upcoming · {sortedPastTrips.length} completed
-                </Text>
+                <View className="flex-row items-center mt-1.5 gap-3">
+                  <View className="flex-row items-center">
+                    <View className="w-2 h-2 rounded-full bg-blue-400 mr-1.5" />
+                    <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      {featuredTrips.length} upcoming
+                    </Text>
+                  </View>
+                  <View className="flex-row items-center">
+                    <View className="w-2 h-2 rounded-full bg-slate-500 mr-1.5" />
+                    <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_500Medium' }}>
+                      {sortedPastTrips.length} completed
+                    </Text>
+                  </View>
+                </View>
               </View>
               <View className="flex-row gap-2">
                 <Pressable
@@ -939,7 +978,13 @@ export default function TripsScreen() {
                     setShowSearch(!showSearch);
                     if (showSearch) setSearchQuery('');
                   }}
-                  className="bg-slate-800/80 p-3 rounded-full border border-slate-700/50"
+                  style={{
+                    backgroundColor: 'rgba(30,41,59,0.8)',
+                    padding: 12,
+                    borderRadius: 50,
+                    borderWidth: 1,
+                    borderColor: 'rgba(148,163,184,0.15)',
+                  }}
                 >
                   {showSearch ? (
                     <X size={20} color="#94A3B8" />
@@ -949,9 +994,23 @@ export default function TripsScreen() {
                 </Pressable>
                 <Pressable
                   onPress={handleAddTrip}
-                  className="bg-blue-500 p-3 rounded-full"
                 >
-                  <Plus size={20} color="#FFFFFF" />
+                  <LinearGradient
+                    colors={['#3B82F6', '#2563EB']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={{
+                      padding: 12,
+                      borderRadius: 50,
+                      shadowColor: '#3B82F6',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.3,
+                      shadowRadius: 8,
+                      elevation: 6,
+                    }}
+                  >
+                    <Plus size={20} color="#FFFFFF" />
+                  </LinearGradient>
                 </Pressable>
               </View>
             </View>
@@ -1270,9 +1329,14 @@ export default function TripsScreen() {
           {/* Past Trips — show even when offline if we have cached data */}
           {!isLoading && (!error || isOfflineWithCache) && sortedPastTrips.length > 0 && (
             <View className="mt-8 px-5 pb-8">
-              <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-                Past Trips
-              </Text>
+              {/* Styled divider with label */}
+              <View className="flex-row items-center mb-5">
+                <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(51,65,85,0.5)' }} />
+                <Text className="text-slate-500 text-xs font-semibold uppercase tracking-widest mx-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                  Past Trips
+                </Text>
+                <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(51,65,85,0.5)' }} />
+              </View>
               {sortedPastTrips.map((trip, index) => (
                 <CompactTripCard key={trip.id} trip={trip} index={index} />
               ))}

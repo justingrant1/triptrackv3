@@ -42,7 +42,7 @@ const plans: Plan[] = [
     name: 'Free',
     price: '$0',
     period: '/forever',
-    description: 'Beautiful trip tracking, by hand',
+    description: 'Everything you need to get started',
     icon: <Zap size={24} color="#64748B" />,
     color: '#64748B',
     features: [

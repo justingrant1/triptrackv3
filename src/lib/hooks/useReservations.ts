@@ -246,6 +246,10 @@ export function useUpcomingReservations() {
       if (error) throw error;
       return data as Reservation[];
     },
+    // Upcoming reservations are the most time-sensitive data in the app —
+    // flight status changes, new reservations from Gmail scanning, etc.
+    staleTime: 1000 * 60 * 1, // 1 minute
+    refetchInterval: 1000 * 60 * 3, // Auto-poll every 3 minutes while screen is mounted
   });
 }
 

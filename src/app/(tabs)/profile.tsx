@@ -653,7 +653,7 @@ export default function ProfileScreen() {
                 icon={<HelpCircle size={18} color="#06B6D4" />}
                 iconColor="#06B6D4"
                 label="Help Center"
-                onPress={() => Linking.openURL('https://triptrack.ai/help')}
+                onPress={() => Linking.openURL('https://triptrack.ai/support')}
                 index={7}
                 trailing={<ExternalLink size={16} color="#64748B" />}
               />

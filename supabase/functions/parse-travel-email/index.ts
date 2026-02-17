@@ -793,7 +793,12 @@ serve(async (req) => {
     if (existingTrips && existingTrips.length > 0) {
       existingTripsContext = `- The user already has these trips:\n${existingTrips.map(t => 
         `  * "${t.name}" to ${t.destination} (${t.start_date} to ${t.end_date})`
-      ).join('\n')}\n- If this email is about one of these existing trips, use the same destination and trip name`;
+      ).join('\n')}
+- ⚠️ CRITICAL: The existing trips above are ONLY for reference — they tell you what trips already exist so you can use consistent spelling if the email genuinely refers to the same place.
+- You MUST extract the destination from the EMAIL CONTENT ONLY. Look at the actual airports, cities, and addresses mentioned in the email.
+- For flights: the destination is the ARRIVAL city of the LAST flight leg. If the email shows MIA→IAH (Miami to Houston), the destination is "Houston, TX" — NOT any existing trip's destination.
+- NEVER copy or be influenced by an existing trip's destination unless the email genuinely refers to that exact same city.
+- If the email mentions airports (e.g., MIA, IAH, LAX, JFK), use those airport codes to determine the actual cities. Do NOT confuse them with existing trip destinations.`;
     }
 
     // 2. Parse email with AI

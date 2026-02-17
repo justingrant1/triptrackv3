@@ -1,14 +1,13 @@
 import React from 'react';
-import { Tabs, useRouter } from 'expo-router';
-import { View, Pressable, Platform } from 'react-native';
-import { Compass, Map, Receipt, User, Sparkles } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import { View, Pressable, StyleSheet, Platform } from 'react-native';
+import { NativeTabs, Icon, Label } from 'expo-router/unstable-native-tabs';
+import { useRouter } from 'expo-router';
+import { Sparkles } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withRepeat,
   withSequence,
   withTiming,
@@ -20,28 +19,7 @@ export const unstable_settings = {
   initialRouteName: 'trips',
 };
 
-function TabBarIcon({ icon: Icon, color, focused }: { icon: typeof Compass; color: string; focused: boolean }) {
-  const scale = useSharedValue(focused ? 1 : 0.9);
-  
-  React.useEffect(() => {
-    scale.value = withSpring(focused ? 1.1 : 0.9, {
-      damping: 15,
-      stiffness: 200,
-    });
-  }, [focused]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  return (
-    <Animated.View style={animatedStyle} className="items-center justify-center">
-      <Icon size={24} color={color} strokeWidth={focused ? 2.5 : 2} />
-    </Animated.View>
-  );
-}
-
-function AskAIButton() {
+function FloatingAIButton() {
   const router = useRouter();
   const pulse = useSharedValue(1);
   const glow = useSharedValue(0.6);
@@ -84,44 +62,21 @@ function AskAIButton() {
   return (
     <Pressable
       onPress={handlePress}
-      style={{
-        top: -20,
-        justifyContent: 'center',
-        alignItems: 'center',
-      }}
+      style={styles.fabContainer}
+      accessibilityLabel="Ask AI Concierge"
+      accessibilityRole="button"
     >
       {/* Animated glow ring */}
       <Animated.View
-        style={[
-          glowStyle,
-          {
-            position: 'absolute',
-            width: 72,
-            height: 72,
-            borderRadius: 36,
-            backgroundColor: '#A855F7',
-            opacity: 0.3,
-          },
-        ]}
+        style={[styles.fabGlow, glowStyle]}
       />
-      
+
       <Animated.View style={pulseStyle}>
         <LinearGradient
           colors={['#A855F7', '#7C3AED']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            justifyContent: 'center',
-            alignItems: 'center',
-            shadowColor: '#A855F7',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.5,
-            shadowRadius: 12,
-            elevation: 10,
-          }}
+          style={styles.fabGradient}
         >
           <Sparkles size={26} color="#FFFFFF" />
         </LinearGradient>
@@ -136,98 +91,72 @@ export default function TabLayout() {
       fallbackTitle="Tab Error"
       fallbackMessage="Something went wrong with this tab. Please try again."
     >
-      <Tabs
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: '#FFFFFF',
-          tabBarInactiveTintColor: '#64748B',
-          tabBarStyle: {
-            position: 'absolute',
-            backgroundColor: Platform.OS === 'ios' ? 'transparent' : 'rgba(10, 15, 28, 0.95)',
-            borderTopWidth: 0,
-            height: 88,
-            paddingTop: 8,
-            paddingBottom: 28,
-            elevation: 0,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: -4 },
-            shadowOpacity: 0.1,
-            shadowRadius: 12,
-          },
-          tabBarBackground: () => (
-            Platform.OS === 'ios' ? (
-              <BlurView
-                intensity={80}
-                tint="dark"
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  borderTopWidth: 1,
-                  borderTopColor: 'rgba(51, 65, 85, 0.3)',
-                }}
-              />
-            ) : null
-          ),
-          tabBarLabelStyle: {
-            fontFamily: 'DMSans_500Medium',
-            fontSize: 11,
-            marginTop: 4,
-          },
-        }}
-        initialRouteName="trips"
-      >
-      <Tabs.Screen
-        name="trips"
-        options={{
-          title: 'Trips',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon icon={Map} color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Today',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon icon={Compass} color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="ask-ai"
-        options={{
-          title: '',
-          tabBarButton: () => <AskAIButton />,
-        }}
-        listeners={{
-          tabPress: (e) => {
-            e.preventDefault();
-          },
-        }}
-      />
-      <Tabs.Screen
-        name="receipts"
-        options={{
-          title: 'Receipts',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon icon={Receipt} color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon icon={User} color={color} focused={focused} />
-          ),
-        }}
-      />
-    </Tabs>
+      <View style={styles.container}>
+        <NativeTabs
+          minimizeBehavior="onScrollDown"
+          disableTransparentOnScrollEdge
+        >
+          <NativeTabs.Trigger name="trips">
+            <Label>Trips</Label>
+            <Icon sf={{ default: 'map', selected: 'map.fill' }} />
+          </NativeTabs.Trigger>
+
+          <NativeTabs.Trigger name="index">
+            <Label>Today</Label>
+            <Icon sf={{ default: 'safari', selected: 'safari.fill' }} />
+          </NativeTabs.Trigger>
+
+          {/* Hidden placeholder — AI is accessed via floating button */}
+          <NativeTabs.Trigger name="ask-ai" hidden />
+
+          <NativeTabs.Trigger name="receipts">
+            <Label>Receipts</Label>
+            <Icon sf="receipt" />
+          </NativeTabs.Trigger>
+
+          <NativeTabs.Trigger name="profile">
+            <Label>Profile</Label>
+            <Icon sf={{ default: 'person', selected: 'person.fill' }} />
+          </NativeTabs.Trigger>
+        </NativeTabs>
+
+        {/* Floating AI Concierge Button */}
+        <FloatingAIButton />
+      </View>
     </ErrorBoundary>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  fabContainer: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 90 : 70,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  fabGlow: {
+    position: 'absolute',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#A855F7',
+    opacity: 0.3,
+  },
+  fabGradient: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#A855F7',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+});

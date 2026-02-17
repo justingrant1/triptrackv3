@@ -39,6 +39,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
+import { useFocusEffect } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useUpcomingTrips } from '@/lib/hooks/useTrips';
 import { useUpcomingReservations } from '@/lib/hooks/useReservations';
 import type { Reservation } from '@/lib/types/database';
@@ -918,10 +920,21 @@ export default function TodayScreen() {
   const [showOfflineToast, setShowOfflineToast] = React.useState(false);
   const responsive = useResponsive();
   
+  const queryClient = useQueryClient();
   const { data: upcomingTrips = [], refetch: refetchTrips } = useUpcomingTrips();
   const { data: upcomingReservations = [], refetch: refetchReservations } = useUpcomingReservations();
   const { data: unreadCount = 0 } = useUnreadNotificationCount();
   const { data: profile } = useProfile();
+
+  // ─── Tab Focus Refresh ─────────────────────────────────────────────────────
+  // When the user switches to the Today tab, silently refetch stale data.
+  // Cached data shows instantly; fresh data swaps in seamlessly in the background.
+  useFocusEffect(
+    React.useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ['trips'] });
+      queryClient.invalidateQueries({ queryKey: ['reservations', 'upcoming'] });
+    }, [queryClient])
+  );
 
   // Ambient orb animations
   const orb1X = useSharedValue(-100);
@@ -1220,40 +1233,63 @@ export default function TodayScreen() {
             >
             <View className="flex-row items-start justify-between mb-4">
               <View className="flex-1">
-                {/* Time-aware greeting */}
+                {/* Date pill */}
                 <Animated.View entering={FadeInDown.duration(700).delay(100)}>
-                  <Text className="text-slate-400 text-sm mb-1" style={{ fontFamily: 'DMSans_400Regular' }}>
-                    {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-                  </Text>
-                  <Text className="text-white text-2xl font-bold" style={{ fontFamily: 'DMSans_700Bold' }}>
+                  <View style={{ alignSelf: 'flex-start', backgroundColor: 'rgba(30,41,59,0.7)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(51,65,85,0.5)', marginBottom: 8 }}>
+                    <Text className="text-slate-400 text-xs" style={{ fontFamily: 'DMSans_500Medium', letterSpacing: 0.3 }}>
+                      {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                    </Text>
+                  </View>
+                  <Text className="text-white text-3xl font-bold" style={{ fontFamily: 'DMSans_700Bold', letterSpacing: -0.5 }}>
                     {getGreeting()} {getGreetingEmoji()}
                   </Text>
                 </Animated.View>
 
-                {/* Active trip context */}
+                {/* Active trip context — glassmorphic badge */}
                 {activeTrip && weather && (
                   <Animated.View entering={FadeInDown.duration(700).delay(200)}>
-                    <Pressable onPress={handleActiveTripPress} className="flex-row items-center mt-3">
-                      <View className="w-2 h-2 rounded-full bg-emerald-500 mr-2" />
+                    <Pressable
+                      onPress={handleActiveTripPress}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginTop: 12,
+                        alignSelf: 'flex-start',
+                        backgroundColor: 'rgba(16,185,129,0.1)',
+                        paddingHorizontal: 14,
+                        paddingVertical: 8,
+                        borderRadius: 20,
+                        borderWidth: 1,
+                        borderColor: 'rgba(16,185,129,0.2)',
+                      }}
+                    >
+                      <View className="w-2 h-2 rounded-full bg-emerald-400 mr-2" />
                       <Text className="text-emerald-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
                         {activeTrip.destination}
                       </Text>
-                      <Text className="text-slate-500 text-sm ml-2" style={{ fontFamily: 'DMSans_400Regular' }}>
+                      <View style={{ width: 1, height: 14, backgroundColor: 'rgba(16,185,129,0.3)', marginHorizontal: 10 }} />
+                      <Text className="text-emerald-400/70 text-sm" style={{ fontFamily: 'DMSans_500Medium' }}>
                         {weather.temperature}° {getWeatherIcon(weather.condition)}
                       </Text>
-                      <ChevronRight size={14} color="#64748B" className="ml-1" />
+                      <ChevronRight size={14} color="#34D399" style={{ marginLeft: 4 }} />
                     </Pressable>
                   </Animated.View>
                 )}
               </View>
 
-              {/* Notification bell */}
+              {/* Notification bell — refined */}
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   router.push('/notifications');
                 }}
-                className="bg-slate-800/60 p-3 rounded-full border border-slate-700/40"
+                style={{
+                  backgroundColor: 'rgba(30,41,59,0.8)',
+                  padding: 12,
+                  borderRadius: 50,
+                  borderWidth: 1,
+                  borderColor: 'rgba(148,163,184,0.15)',
+                }}
               >
                 <Bell size={20} color="#94A3B8" />
                 {unreadCount > 0 && (
@@ -1262,17 +1298,21 @@ export default function TodayScreen() {
                       position: 'absolute',
                       top: -4,
                       right: -4,
-                      backgroundColor: '#EF4444',
                       borderRadius: 10,
-                      minWidth: 18,
-                      height: 18,
+                      minWidth: 20,
+                      height: 20,
                       justifyContent: 'center',
                       alignItems: 'center',
-                      paddingHorizontal: 4,
+                      paddingHorizontal: 5,
                       borderWidth: 2,
-                      borderColor: '#020617',
+                      borderColor: '#0F172A',
+                      overflow: 'hidden',
                     }}
                   >
+                    <LinearGradient
+                      colors={['#EF4444', '#DC2626']}
+                      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+                    />
                     <Text style={{ color: '#FFFFFF', fontSize: 10, fontFamily: 'DMSans_700Bold' }}>
                       {unreadCount > 99 ? '99+' : unreadCount}
                     </Text>
@@ -1320,23 +1360,37 @@ export default function TodayScreen() {
             )}
           </ResponsiveContainer>
 
-          {/* Contextual Quick Actions */}
+          {/* Contextual Quick Actions — frosted glass bar */}
           <ResponsiveContainer>
             <Animated.View
               entering={FadeInDown.duration(500).delay(200)}
-              className="flex-row px-5 mt-5"
+              className="px-5 mt-5"
             >
-            {quickActions.map((action, index) => (
-              <React.Fragment key={action.label}>
-                {index > 0 && <View className="w-3" />}
-                <QuickAction
-                  icon={action.icon}
-                  label={action.label}
-                  color={action.color}
-                  onPress={action.onPress}
-                />
-              </React.Fragment>
-            ))}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  backgroundColor: 'rgba(15,23,42,0.6)',
+                  borderRadius: 20,
+                  paddingVertical: 14,
+                  paddingHorizontal: 8,
+                  borderWidth: 1,
+                  borderColor: 'rgba(51,65,85,0.4)',
+                }}
+              >
+                {quickActions.map((action, index) => (
+                  <React.Fragment key={action.label}>
+                    {index > 0 && (
+                      <View style={{ width: 1, backgroundColor: 'rgba(51,65,85,0.5)', marginVertical: 4 }} />
+                    )}
+                    <QuickAction
+                      icon={action.icon}
+                      label={action.label}
+                      color={action.color}
+                      onPress={action.onPress}
+                    />
+                  </React.Fragment>
+                ))}
+              </View>
             </Animated.View>
           </ResponsiveContainer>
 
@@ -1344,9 +1398,16 @@ export default function TodayScreen() {
           <ResponsiveContainer>
             {laterToday.length > 0 && (
               <View className="mt-8 px-5">
-              <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-                Later Today
-              </Text>
+              <View className="flex-row items-center mb-4">
+                <View style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#3B82F6', marginRight: 10 }} />
+                <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                  Later Today
+                </Text>
+                <View style={{ backgroundColor: 'rgba(59,130,246,0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginLeft: 8 }}>
+                  <Text style={{ color: '#60A5FA', fontSize: 11, fontFamily: 'DMSans_700Bold' }}>{laterToday.length}</Text>
+                </View>
+                <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(51,65,85,0.4)', marginLeft: 12 }} />
+              </View>
               <View className="gap-3">
                 {laterToday.map((res, i) => (
                   <UpcomingItem key={res.id} reservation={res} index={i} />
@@ -1357,9 +1418,18 @@ export default function TodayScreen() {
 
             {upcoming48h.length > (todayReservations.length > 0 ? todayReservations.length : 1) && (
               <View className="mt-8 px-5">
-              <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider mb-4" style={{ fontFamily: 'SpaceMono_400Regular' }}>
-                Coming Up
-              </Text>
+              <View className="flex-row items-center mb-4">
+                <View style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#8B5CF6', marginRight: 10 }} />
+                <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                  Coming Up
+                </Text>
+                <View style={{ backgroundColor: 'rgba(139,92,246,0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginLeft: 8 }}>
+                  <Text style={{ color: '#A78BFA', fontSize: 11, fontFamily: 'DMSans_700Bold' }}>
+                    {upcoming48h.length - (todayReservations.length > 0 ? todayReservations.length : 1)}
+                  </Text>
+                </View>
+                <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(51,65,85,0.4)', marginLeft: 12 }} />
+              </View>
               <View className="gap-3">
                 {upcoming48h
                   .slice(todayReservations.length > 0 ? todayReservations.length : 1)
@@ -1374,10 +1444,15 @@ export default function TodayScreen() {
             {inProgressItems.length > 0 && (
               <View className="mt-8 px-5 pb-8">
               <View className="flex-row items-center mb-4">
-                <Plane size={14} color="#3B82F6" style={{ transform: [{ rotate: '45deg' }] }} />
-                <Text className="text-slate-400 text-sm font-semibold uppercase tracking-wider ml-2" style={{ fontFamily: 'SpaceMono_400Regular' }}>
+                <View style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#10B981', marginRight: 10 }} />
+                <Plane size={14} color="#10B981" style={{ transform: [{ rotate: '45deg' }] }} />
+                <Text className="text-slate-300 text-sm font-semibold uppercase tracking-wider ml-2" style={{ fontFamily: 'SpaceMono_400Regular' }}>
                   In Progress
                 </Text>
+                <View style={{ backgroundColor: 'rgba(16,185,129,0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginLeft: 8 }}>
+                  <Text style={{ color: '#34D399', fontSize: 11, fontFamily: 'DMSans_700Bold' }}>{inProgressItems.length}</Text>
+                </View>
+                <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(51,65,85,0.4)', marginLeft: 12 }} />
               </View>
               <View className="gap-3">
                 {inProgressItems.map((res, i) => (
