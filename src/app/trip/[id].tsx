@@ -41,7 +41,7 @@ import { useTrip, useDeleteTrip } from '@/lib/hooks/useTrips';
 import { useReservations, useDeleteReservation } from '@/lib/hooks/useReservations';
 import { useTripExpenses } from '@/lib/hooks/useReceipts';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatTimeFromISO, formatDate, formatDateLong, formatDateFromISO, formatCurrency, isToday, isTomorrow, isTodayISO, isTomorrowISO, getLiveStatus, LiveStatus, getFlightDuration, parseDateOnly, getContextualTimeInfo, getFlightDepartureUTC, getReservationEndUTC } from '@/lib/utils';
+import { formatTime, formatTimeFromISO, formatDate, formatDateLong, formatDateFromISO, formatCurrency, isToday, isTomorrow, isTodayISO, isTomorrowISO, getLiveStatus, LiveStatus, getFlightDuration, parseDateOnly, getContextualTimeInfo, getFlightDepartureUTC, getReservationEndUTC, getLocalTimeISO, isReservationToday, isReservationTomorrow } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { shareTripNative } from '@/lib/sharing';
@@ -789,7 +789,7 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
                           const contextInfo = reservation.type === 'flight' && flightStatusData
                             ? getContextualTimeInfo(reservation, flightStatusData)
                             : null;
-                          const depTime = contextInfo?.time || formatTimeFromISO(reservation.start_time);
+                          const depTime = contextInfo?.time || formatTimeFromISO(getLocalTimeISO(reservation, 'start'));
                           const flightDur = getFlightDuration(reservation);
                           if (flightDur) {
                             return `${depTime} · ${flightDur}`;
@@ -813,10 +813,10 @@ function ReservationCard({ reservation, index, isFirst, isLast, tripId }: {
                           return depTime;
                         })()
                       : (() => {
-                          // Hotels, cars, etc. — show time range
-                          const startTime = formatTimeFromISO(reservation.start_time);
+                          // Hotels, cars, etc. — show time range using local times
+                          const startTime = formatTimeFromISO(getLocalTimeISO(reservation, 'start'));
                           if (reservation.end_time) {
-                            return `${startTime} - ${formatTimeFromISO(reservation.end_time)}`;
+                            return `${startTime} - ${formatTimeFromISO(getLocalTimeISO(reservation, 'end'))}`;
                           }
                           return startTime;
                         })()
@@ -1022,10 +1022,12 @@ function TripDetailScreenContent() {
     );
   }
 
-  // Group reservations by date
+  // Group reservations by date — use LOCAL time so Bali events show on the correct date
   const reservationsByDate = reservations.reduce((acc: Record<string, Reservation[]>, res: Reservation) => {
-    // BUG FIX: Use formatDateFromISO to avoid timezone conversion
-    const dateKey = formatDateLong(new Date(res.start_time.match(/^(\d{4})-(\d{2})-(\d{2})/)![0] + 'T12:00:00'));
+    // Use local time ISO (from details['Local Start Time'] or fallback to start_time)
+    // to extract the correct local date for grouping
+    const localISO = getLocalTimeISO(res, 'start');
+    const dateKey = formatDateLong(new Date(localISO.match(/^(\d{4})-(\d{2})-(\d{2})/)![0] + 'T12:00:00'));
     if (!acc[dateKey]) {
       acc[dateKey] = [];
     }
@@ -1059,10 +1061,12 @@ function TripDetailScreenContent() {
   const sections = sortedDates.map((dateKey) => {
     const dateReservations = reservationsByDate[dateKey];
     const firstRes = dateReservations[0];
-    // BUG FIX: Use isTodayISO/isTomorrowISO to avoid timezone conversion
-    const dateLabel = isTodayISO(firstRes.start_time)
+    // BUG FIX: Use timezone-aware isReservationToday/isReservationTomorrow
+    // so that a flight departing "today" in Tokyo shows as "Today" even when
+    // the user's device is still on yesterday's date in a western timezone.
+    const dateLabel = isReservationToday(firstRes)
       ? 'Today'
-      : isTomorrowISO(firstRes.start_time)
+      : isReservationTomorrow(firstRes)
       ? 'Tomorrow'
       : dateKey;
 

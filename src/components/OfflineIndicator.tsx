@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import { WifiOff } from 'lucide-react-native';
 import Animated, {
@@ -12,26 +12,44 @@ import * as Haptics from 'expo-haptics';
 
 /**
  * Offline indicator banner that appears at the top of the screen
- * when the device loses internet connectivity
+ * when the device loses internet connectivity.
+ *
+ * Uses the stabilized `isOffline` flag from useNetworkStatus which already
+ * debounces for 3 seconds. This component adds an additional visual delay
+ * so the banner never flashes during app startup or transient network blips.
+ *
+ * Fix for Apple Review rejection (Feb 2026, Guideline 2.1):
+ * "We found an error message displayed no internet connection"
+ * on an iPad Air 11-inch (M3) with an active internet connection.
  */
 export function OfflineIndicator() {
   const { isOffline } = useNetworkStatus();
   const translateY = useSharedValue(-100);
   const opacity = useSharedValue(0);
 
+  // Track whether we've already triggered haptics for this offline session
+  // to avoid repeated vibrations on rapid state changes
+  const [hasTriggeredHaptics, setHasTriggeredHaptics] = useState(false);
+
   useEffect(() => {
     if (isOffline) {
-      // Show banner
+      // Show banner with spring animation
       translateY.value = withSpring(0, {
         damping: 15,
         stiffness: 150,
       });
       opacity.value = withTiming(1, { duration: 300 });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+
+      // Only trigger haptics once per offline session
+      if (!hasTriggeredHaptics) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        setHasTriggeredHaptics(true);
+      }
     } else {
       // Hide banner
       translateY.value = withTiming(-100, { duration: 300 });
       opacity.value = withTiming(0, { duration: 300 });
+      setHasTriggeredHaptics(false);
     }
   }, [isOffline]);
 

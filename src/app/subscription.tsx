@@ -15,7 +15,7 @@ import {
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useProfile } from '@/lib/hooks/useProfile';
-import { getOfferings, purchasePackage, restorePurchases, getPackageDetails, getCustomerInfo } from '@/lib/revenuecat';
+import { getOfferings, purchasePackage, restorePurchases, getPackageDetails, getCustomerInfo, isRevenueCatReady } from '@/lib/revenuecat';
 import { PurchasesPackage } from 'react-native-purchases';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -218,14 +218,26 @@ export default function SubscriptionScreen() {
   const [monthlyPackage, setMonthlyPackage] = React.useState<PurchasesPackage | null>(null);
   const [annualPackage, setAnnualPackage] = React.useState<PurchasesPackage | null>(null);
 
-  // Load offerings from RevenueCat
+  // Load offerings from RevenueCat (with retry for SDK initialization timing)
   React.useEffect(() => {
     loadOfferings();
   }, []);
 
-  const loadOfferings = async () => {
+  const loadOfferings = async (retryCount = 0) => {
     setIsLoading(true);
     try {
+      // Check if RevenueCat is properly configured before attempting to load offerings
+      if (!isRevenueCatReady()) {
+        // SDK might not be initialized yet — retry after a short delay (up to 3 attempts)
+        if (retryCount < 3) {
+          console.log(`⏳ RevenueCat not ready yet, retrying in ${(retryCount + 1)}s... (attempt ${retryCount + 1}/3)`);
+          setTimeout(() => loadOfferings(retryCount + 1), (retryCount + 1) * 1000);
+          return;
+        }
+        console.warn('⚠️ RevenueCat not ready after 3 retries — skipping offerings load');
+        return;
+      }
+
       const offerings = await getOfferings();
       
       if (offerings?.current) {

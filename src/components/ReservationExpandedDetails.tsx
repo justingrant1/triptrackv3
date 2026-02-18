@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatTimeFromISO, formatDate, getFlightDuration, getContextualTimeInfo } from '@/lib/utils';
+import { formatTime, formatTimeFromISO, formatDate, getFlightDuration, getContextualTimeInfo, getLocalTimeISO } from '@/lib/utils';
 import { FlightStatusBar } from '@/components/FlightStatusBar';
 import { getStoredFlightStatus } from '@/lib/flight-status';
 import { getBoardingPassFromReservation } from '@/lib/boarding-pass';
@@ -70,8 +70,8 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
     // For departure time, prefer live API data (local airport time from AirLabs)
     // over stored reservation time which may have timezone storage issues.
     const contextInfo = liveFlightStatus ? getContextualTimeInfo(reservation, liveFlightStatus) : null;
-    const depTime = contextInfo?.time || (reservation.start_time ? formatTimeFromISO(reservation.start_time) : null);
-    const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
+    const depTime = contextInfo?.time || (reservation.start_time ? formatTimeFromISO(getLocalTimeISO(reservation, 'start')) : null);
+    const arrTime = reservation.end_time ? formatTimeFromISO(getLocalTimeISO(reservation, 'end')) : null;
 
     // Use timezone-aware duration calculation (handles cross-timezone flights correctly)
     const flightDuration: string | null = getFlightDuration(reservation);
@@ -217,14 +217,20 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
 
   // 🏨 HOTEL layout
   if (reservation.type === 'hotel') {
-    const checkIn = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
-    const checkOut = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
-    const checkInDate = reservation.start_time ? formatDate(new Date(reservation.start_time)) : null;
-    const checkOutDate = reservation.end_time ? formatDate(new Date(reservation.end_time)) : null;
+    // Use local times for display (e.g. 3:00 PM Bali time, not UTC)
+    const localStart = getLocalTimeISO(reservation, 'start');
+    const localEnd = getLocalTimeISO(reservation, 'end');
+    const checkIn = reservation.start_time ? formatTimeFromISO(localStart) : null;
+    const checkOut = reservation.end_time ? formatTimeFromISO(localEnd) : null;
+    const checkInDate = reservation.start_time ? formatDate(new Date(localStart)) : null;
+    const checkOutDate = reservation.end_time ? formatDate(new Date(localEnd)) : null;
 
+    // Calculate nights using local dates (not UTC — avoids off-by-one for large timezone offsets)
     let nights: number | null = null;
     if (reservation.start_time && reservation.end_time) {
-      const diffMs = new Date(reservation.end_time).getTime() - new Date(reservation.start_time).getTime();
+      const startDateStr = localStart.substring(0, 10);
+      const endDateStr = localEnd.substring(0, 10);
+      const diffMs = new Date(endDateStr + 'T00:00:00').getTime() - new Date(startDateStr + 'T00:00:00').getTime();
       nights = Math.round(diffMs / (1000 * 60 * 60 * 24));
     }
 
@@ -310,10 +316,13 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
 
   // 🚗 CAR RENTAL layout
   if (reservation.type === 'car') {
-    const pickupTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
-    const pickupDate = reservation.start_time ? formatDate(new Date(reservation.start_time)) : null;
-    const dropoffTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
-    const dropoffDate = reservation.end_time ? formatDate(new Date(reservation.end_time)) : null;
+    // Use local times for display (e.g. 10:00 AM Bali time, not UTC)
+    const localPickup = getLocalTimeISO(reservation, 'start');
+    const localDropoff = getLocalTimeISO(reservation, 'end');
+    const pickupTime = reservation.start_time ? formatTimeFromISO(localPickup) : null;
+    const pickupDate = reservation.start_time ? formatDate(new Date(localPickup)) : null;
+    const dropoffTime = reservation.end_time ? formatTimeFromISO(localDropoff) : null;
+    const dropoffDate = reservation.end_time ? formatDate(new Date(localDropoff)) : null;
 
     return (
       <View className={compact ? 'py-2' : 'px-4 py-3'}>
@@ -382,8 +391,9 @@ export function ReservationExpandedDetails({ reservation, showFlightStatus = tru
   if (reservation.type === 'train') {
     const depStation = d['Departure Station'] || d['From'] || null;
     const arrStation = d['Arrival Station'] || d['To'] || null;
-    const depTime = reservation.start_time ? formatTimeFromISO(reservation.start_time) : null;
-    const arrTime = reservation.end_time ? formatTimeFromISO(reservation.end_time) : null;
+    // Use local times for display
+    const depTime = reservation.start_time ? formatTimeFromISO(getLocalTimeISO(reservation, 'start')) : null;
+    const arrTime = reservation.end_time ? formatTimeFromISO(getLocalTimeISO(reservation, 'end')) : null;
 
     return (
       <View className={compact ? 'py-2' : 'px-4 py-3'}>

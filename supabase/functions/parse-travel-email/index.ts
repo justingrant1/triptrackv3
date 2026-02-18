@@ -37,16 +37,59 @@ interface ParsedTrip {
 }
 
 /**
- * Strip timezone offset from an ISO datetime string.
- * Ensures local times are stored as-is without UTC conversion.
- * e.g., "2026-02-12T10:10:00-08:00" → "2026-02-12T10:10:00"
- *       "2026-02-12T10:10:00Z"       → "2026-02-12T10:10:00"
- *       "2026-02-12T10:10:00"         → "2026-02-12T10:10:00" (unchanged)
+ * Convert a local time + UTC offset to a proper UTC ISO string.
+ * 
+ * The AI provides local times (e.g., "2026-02-17T11:00:00" for 11 AM Tokyo)
+ * plus timezone offsets (e.g., "+09:00" for JST). We combine them to get
+ * the real UTC instant and store that in the database.
+ * 
+ * This means ALL start_time/end_time values in the DB are in UTC,
+ * making all date comparisons trivial (no timezone math needed on the client).
+ * 
+ * The original timezone offset is preserved in the reservation's `details`
+ * field so the client can convert back to local time for display.
+ * 
+ * Examples:
+ *   ("2026-02-17T11:00:00", "+09:00") → "2026-02-17T02:00:00Z"  (Tokyo 11 AM → UTC 2 AM)
+ *   ("2026-02-17T14:00:00", "+08:00") → "2026-02-17T06:00:00Z"  (Bali 2 PM → UTC 6 AM)
+ *   ("2026-02-17T08:00:00", "-05:00") → "2026-02-17T13:00:00Z"  (NYC 8 AM → UTC 1 PM)
+ * 
+ * If no timezone offset is available, stores the time as-is with Z appended
+ * (assumes UTC — better than treating as device-local on the client).
  */
-function stripTimezoneOffset(isoString: string | null | undefined): string | null {
-  if (!isoString) return null;
-  // Remove trailing Z, +HH:MM, -HH:MM, +HHMM, -HHMM
-  return isoString.replace(/([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?)(Z|[+-]\d{2}:?\d{2})$/i, '$1');
+function convertToUTC(localTime: string | null | undefined, tzOffset: string | null | undefined): string | null {
+  if (!localTime) return null;
+
+  // Strip any existing offset/Z from the local time string first
+  const stripped = localTime.replace(/[Zz]$/, '').replace(/[+-]\d{2}:?\d{2}$/, '');
+
+  if (!tzOffset) {
+    // No timezone info — append Z (treat as UTC, which is the safest default)
+    return stripped + 'Z';
+  }
+
+  // Parse the offset: "+09:00" → +540 minutes, "-05:00" → -300 minutes
+  const m = tzOffset.match(/^([+-])(\d{1,2}):?(\d{2})$/);
+  if (!m) {
+    // Invalid offset format — fall back to appending Z
+    console.warn(`[UTC Convert] Invalid timezone offset "${tzOffset}" — treating as UTC`);
+    return stripped + 'Z';
+  }
+
+  const sign = m[1] === '+' ? 1 : -1;
+  const offsetMinutes = sign * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10));
+
+  // Parse the local time as if it were UTC (no offset applied yet)
+  const localDate = new Date(stripped + 'Z');
+  if (isNaN(localDate.getTime())) {
+    console.warn(`[UTC Convert] Invalid date "${localTime}" — returning null`);
+    return null;
+  }
+
+  // Subtract the offset to get real UTC
+  // e.g., 11:00 local in +09:00 → 11:00 - 9h = 02:00 UTC
+  const utcMs = localDate.getTime() - (offsetMinutes * 60 * 1000);
+  return new Date(utcMs).toISOString();
 }
 
 /**
@@ -170,6 +213,7 @@ Return ONLY valid JSON in this exact format:
         "Duration": "flight duration as 'Xh Ym' (e.g. '11h 55m') — REQUIRED for flights, calculate from departure/arrival times and timezone difference",
         "Departure Timezone": "UTC offset of departure location as '+HH:MM' or '-HH:MM' (e.g. '-08:00' for LAX, '+09:00' for NRT) — REQUIRED for flights",
         "Arrival Timezone": "UTC offset of arrival location as '+HH:MM' or '-HH:MM' (e.g. '+09:00' for NRT, '-05:00' for JFK) — REQUIRED for flights",
+        "Location Timezone": "UTC offset of the reservation location as '+HH:MM' or '-HH:MM' (e.g. '+08:00' for Bali, '+09:00' for Tokyo) — REQUIRED for hotels, car rentals, and all non-flight reservations",
         "Seat": "seat number (flights)",
         "Gate": "gate number (flights)",
         "Terminal": "terminal (flights)",
@@ -421,7 +465,14 @@ async function findOrCreateTripForEmail(
     return trip.id;
   }
 
-  // === Check if this trip was previously deleted by the user ===
+  // === Email forwarding = intentional re-add ===
+  // Unlike scan-gmail (automatic background scanning), parse-travel-email is triggered
+  // when a user MANUALLY forwards an email to plans+x@triptrack.ai.
+  // If they previously deleted a trip and are now re-forwarding the email,
+  // they clearly want to re-add it. So we skip the deleted_trips check here.
+  //
+  // Additionally, remove the deleted_trips entry so future Gmail scans
+  // won't block this trip either (the user has expressed intent to re-add it).
   const wasDeleted = await wasTripDeleted(
     supabase,
     userId,
@@ -433,8 +484,34 @@ async function findOrCreateTripForEmail(
   );
 
   if (wasDeleted) {
-    console.log(`[Deleted Trip Block] User previously deleted a trip matching "${destination}" (${start_date} to ${end_date}) — skipping recreation`);
-    return null;
+    console.log(`[Deleted Trip Override] User previously deleted a trip matching "${destination}" — but this is an intentional email forward, so allowing re-creation`);
+    
+    // Remove the deleted_trips entry so Gmail scan won't block it either
+    // (Use same fuzzy matching window to find and remove the entry)
+    const bufferDaysDeleted = 7;
+    const bufferedStartDeleted = new Date(start_date);
+    bufferedStartDeleted.setDate(bufferedStartDeleted.getDate() - bufferDaysDeleted);
+    const bufferedEndDeleted = new Date(end_date);
+    bufferedEndDeleted.setDate(bufferedEndDeleted.getDate() + bufferDaysDeleted);
+
+    const { data: deletedEntries } = await supabase
+      .from('deleted_trips')
+      .select('id, destination, original_trip_name')
+      .eq('user_id', userId)
+      .gte('end_date', bufferedStartDeleted.toISOString().split('T')[0])
+      .lte('start_date', bufferedEndDeleted.toISOString().split('T')[0]);
+
+    if (deletedEntries) {
+      for (const entry of deletedEntries) {
+        if (areDestinationsRelated(destination, country, region, entry.destination, entry.original_trip_name || '')) {
+          await supabase
+            .from('deleted_trips')
+            .delete()
+            .eq('id', entry.id);
+          console.log(`[Deleted Trip Override] Removed deleted_trips entry: "${entry.original_trip_name}" (${entry.destination})`);
+        }
+      }
+    }
   }
 
   // === No match found — create new trip ===
@@ -616,24 +693,42 @@ async function generateEmailHash(from: string, subject: string, body: string): P
 }
 
 /**
- * Check if an email has already been processed (deduplication).
+ * Atomically claim an email for processing (prevents race conditions).
+ * Inserts a 'processing' record — if it already exists, returns false (already claimed).
+ * This replaces the old check-then-mark pattern which had a TOCTOU race condition
+ * where two simultaneous webhook deliveries could both pass the check.
  */
-async function isEmailProcessed(
+async function claimEmailForProcessing(
   supabase: any,
   userId: string,
   emailHash: string
 ): Promise<boolean> {
   try {
-    const { data } = await supabase
+    // Try to insert a 'processing' record. If the unique constraint
+    // (user_id, gmail_message_id) is violated, the email was already claimed.
+    const { error } = await supabase
       .from('processed_gmail_messages')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('gmail_message_id', emailHash)
-      .maybeSingle();
+      .insert({
+        user_id: userId,
+        gmail_message_id: emailHash,
+        status: 'processing',
+        processed_at: new Date().toISOString(),
+      });
 
-    return !!data;
+    if (error) {
+      // Unique constraint violation = already claimed by another request
+      if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('unique')) {
+        return false;
+      }
+      // Some other error — log but allow processing (fail open)
+      console.warn(`[Claim] Unexpected error claiming email:`, error);
+      return true;
+    }
+
+    return true; // Successfully claimed
   } catch {
-    return false;
+    // On error, allow processing (fail open to avoid dropping emails)
+    return true;
   }
 }
 
@@ -763,26 +858,44 @@ serve(async (req) => {
     const userId = profile.id;
     console.log('Processing for user:', userId);
 
-    // 1b. Check if this email has already been processed (deduplication)
+    // 1b. Atomic email deduplication — claim the hash BEFORE processing.
+    // This prevents race conditions where two webhook deliveries of the same
+    // email both pass the "already processed?" check simultaneously.
+    // We insert a 'processing' record first; if it already exists, we skip.
     const emailHash = await generateEmailHash(emailFrom, emailSubject, emailText);
-    const alreadyProcessed = await isEmailProcessed(supabase, userId, emailHash);
+    const claimed = await claimEmailForProcessing(supabase, userId, emailHash);
     
-    if (alreadyProcessed) {
-      console.log('Email already processed (hash:', emailHash, ') — skipping');
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: 'Email already processed',
-          skipped: true,
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
+    if (!claimed) {
+      // For email forwarding (plans+x@triptrack.ai), the user is intentionally
+      // re-sending the email. Delete the old processed record and re-claim it.
+      // This handles the case where a user deleted a trip and re-forwards the email.
+      console.log('Email already processed (hash:', emailHash, ') — clearing old record for re-processing (intentional forward)');
+      await supabase
+        .from('processed_gmail_messages')
+        .delete()
+        .eq('user_id', userId)
+        .eq('gmail_message_id', emailHash);
+      
+      // Re-claim after clearing
+      const reClaimed = await claimEmailForProcessing(supabase, userId, emailHash);
+      if (!reClaimed) {
+        console.log('Failed to re-claim email after clearing — skipping');
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Email already processed',
+            skipped: true,
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+      console.log('Email re-claimed successfully for re-processing');
     }
 
-    console.log('Email hash:', emailHash, '— processing');
+    console.log('Email hash:', emailHash, '— claimed for processing');
 
     // 1c. Fetch user's existing trips for AI context (helps with trip matching)
     const { data: existingTrips } = await supabase
@@ -816,18 +929,17 @@ serve(async (req) => {
     const tripId = await findOrCreateTripForEmail(supabase, userId, parsed);
 
     if (!tripId) {
-      // Trip was blocked (user previously deleted it) — return success without creating anything
-      console.log('[Deleted Trip Block] Trip creation blocked — user previously deleted this trip');
-      await markEmailProcessed(supabase, userId, emailHash, 'skipped_deleted_trip');
+      // Trip creation failed (DB error) — return error
+      console.log('[Trip Creation Failed] Could not create or find a matching trip');
+      await markEmailProcessed(supabase, userId, emailHash, 'failed_trip_creation');
       return new Response(
         JSON.stringify({
-          success: true,
-          message: 'Email processed but trip creation was blocked (previously deleted)',
-          skipped: true,
-          reason: 'deleted_trip',
+          success: false,
+          message: 'Failed to create trip from email',
+          error: 'trip_creation_failed',
         }),
         {
-          status: 200,
+          status: 500,
           headers: { 'Content-Type': 'application/json' },
         }
       );
@@ -871,7 +983,34 @@ serve(async (req) => {
         continue;
       }
 
-      // Insert the reservation
+      // Determine the timezone offset for UTC conversion
+      // Flights: use Departure Timezone for start_time, Arrival Timezone for end_time
+      // Hotels/Cars/etc: use Location Timezone for both
+      const details = res.details || {};
+      let startTzOffset: string | undefined;
+      let endTzOffset: string | undefined;
+
+      if (res.type === 'flight') {
+        startTzOffset = details['Departure Timezone'];
+        endTzOffset = details['Arrival Timezone'];
+      } else {
+        startTzOffset = details['Location Timezone'];
+        endTzOffset = details['Location Timezone'];
+      }
+
+      // Also store the original local times in details so the client can display them
+      if (res.start_time) {
+        details['Local Start Time'] = res.start_time;
+      }
+      if (res.end_time) {
+        details['Local End Time'] = res.end_time;
+      }
+
+      // Convert local times → UTC for storage
+      const utcStartTime = convertToUTC(res.start_time, startTzOffset);
+      const utcEndTime = convertToUTC(res.end_time, endTzOffset);
+
+      // Insert the reservation with UTC times
       const { error: insertError } = await supabase
         .from('reservations')
         .insert({
@@ -879,12 +1018,12 @@ serve(async (req) => {
           type: res.type,
           title: res.title,
           subtitle: res.subtitle || null,
-          start_time: stripTimezoneOffset(res.start_time) || res.start_time,
-          end_time: stripTimezoneOffset(res.end_time) || res.end_time || null,
+          start_time: utcStartTime || res.start_time,
+          end_time: utcEndTime || res.end_time || null,
           location: res.location || null,
           address: res.address || null,
           confirmation_number: res.confirmation_number || null,
-          details: res.details || {},
+          details,
           status: reservationStatus,
           alert_message: null,
         });

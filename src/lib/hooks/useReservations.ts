@@ -227,19 +227,35 @@ export function useDeleteReservation() {
  * Fetch upcoming reservations (from start of today through next 48 hours).
  * Includes reservations that already started today so flights that have
  * departed but not yet landed still appear on the Today tab.
+ * 
+ * TIMEZONE-AWARE: The query window starts 18 hours before the device's
+ * start-of-today to catch reservations in far-ahead timezones. For example,
+ * when it's 8 PM on Feb 16 in New York (UTC-5), it's already Feb 17 in
+ * Bali (UTC+8). A hotel check-in at 2 PM Bali time on Feb 17 has a raw
+ * start_time of "2026-02-17T14:00:00" which Supabase stores as-is.
+ * Without the wider window, this reservation wouldn't appear until Feb 17
+ * in New York — even though the traveler is already checking in.
+ * 
+ * The 18-hour lookback covers the maximum timezone difference (UTC+14 to UTC-12 = 26h)
+ * with some margin. The client-side `isReservationToday()` filter then
+ * correctly categorizes which reservations are "today" vs "coming up"
+ * using the event's actual timezone.
  */
 export function useUpcomingReservations() {
   return useQuery({
     queryKey: queryKeys.reservations.upcoming,
     queryFn: async () => {
       const now = new Date();
+      // Start 18 hours before device's start-of-today to catch reservations
+      // in far-ahead timezones (e.g., Bali UTC+8 when viewer is in NYC UTC-5)
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const windowStart = new Date(startOfToday.getTime() - 18 * 60 * 60 * 1000);
       const in48Hours = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
       const { data, error } = await supabase
         .from('reservations')
         .select('*')
-        .gte('start_time', startOfToday.toISOString())
+        .gte('start_time', windowStart.toISOString())
         .lte('start_time', in48Hours.toISOString())
         .order('start_time', { ascending: true });
 

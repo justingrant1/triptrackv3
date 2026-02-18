@@ -21,7 +21,7 @@ import Animated, { FadeIn, FadeInDown, SlideInDown } from 'react-native-reanimat
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useSubscription } from '@/lib/hooks/useSubscription';
-import { getOfferings, purchasePackage } from '@/lib/revenuecat';
+import { getOfferings, purchasePackage, isRevenueCatReady } from '@/lib/revenuecat';
 import { useQueryClient } from '@tanstack/react-query';
 
 export type UpgradeReason =

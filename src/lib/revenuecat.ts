@@ -9,32 +9,52 @@ import Purchases, {
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
 
-const REVENUECAT_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY!;
+const REVENUECAT_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY || '';
 
 // Track whether SDK has been configured (configure should only be called once)
 let isConfigured = false;
+
+// Track whether the API key is valid (so we can skip purchase attempts gracefully)
+let isApiKeyValid = false;
+
+/**
+ * Check if RevenueCat is properly configured and ready for purchases.
+ * Use this before attempting any purchase operations.
+ */
+export function isRevenueCatReady(): boolean {
+  return isConfigured && isApiKeyValid;
+}
 
 /**
  * Initialize RevenueCat SDK
  * Call this once on app startup after user is authenticated.
  * Uses configure() on first call, then logIn() for subsequent user switches.
+ *
+ * NOTE: This function does NOT throw on missing API key — it logs a warning
+ * and sets isApiKeyValid = false so purchase flows can show a helpful message
+ * instead of crashing. This prevents the app from breaking during Apple Review
+ * if the environment variable isn't set in the build.
  */
 export async function initializeRevenueCat(userId: string) {
   try {
     // Validate API key exists
-    if (!REVENUECAT_API_KEY || REVENUECAT_API_KEY === 'undefined') {
-      throw new Error('EXPO_PUBLIC_REVENUECAT_API_KEY is not configured. Please add it to your EAS environment variables.');
+    if (!REVENUECAT_API_KEY || REVENUECAT_API_KEY === 'undefined' || REVENUECAT_API_KEY.trim() === '') {
+      console.warn(
+        '⚠️ RevenueCat: EXPO_PUBLIC_REVENUECAT_API_KEY is not configured.',
+        'In-app purchases will not work. Add the key to your EAS environment variables.'
+      );
+      isApiKeyValid = false;
+      return; // Don't throw — let the app continue without purchases
     }
+
+    isApiKeyValid = true;
     
     if (!isConfigured) {
       // First time: configure the SDK
-      Purchases.setLogLevel(LOG_LEVEL.DEBUG); // Change to INFO in production
+      // Use INFO level in production to reduce log noise
+      Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.INFO);
       
-      if (Platform.OS === 'ios') {
-        await Purchases.configure({ apiKey: REVENUECAT_API_KEY, appUserID: userId });
-      } else if (Platform.OS === 'android') {
-        await Purchases.configure({ apiKey: REVENUECAT_API_KEY, appUserID: userId });
-      }
+      await Purchases.configure({ apiKey: REVENUECAT_API_KEY, appUserID: userId });
       
       isConfigured = true;
       console.log('✅ RevenueCat configured for user:', userId);
@@ -48,7 +68,7 @@ export async function initializeRevenueCat(userId: string) {
     }
   } catch (error) {
     console.error('❌ RevenueCat initialization failed:', error);
-    throw error;
+    // Don't throw — let the app continue. Purchase flows will handle the error gracefully.
   }
 }
 

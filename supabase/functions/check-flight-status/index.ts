@@ -442,6 +442,104 @@ function cleanFlightNumber(input: string): string | null {
 // ─── Date / Time Guards ──────────────────────────────────────────────────────
 
 /**
+ * Convert a local time string + timezone offset to real UTC milliseconds.
+ * Used by the edge function (Deno) to correctly interpret departure times.
+ * 
+ * Without this, `new Date("2026-02-17T11:00:00")` on Deno (UTC) treats
+ * the naive string as 11:00 UTC, but the actual departure might be
+ * 11:00 JST (= 02:00 UTC) — a 9-hour error.
+ */
+function toUTCMs(localISO: string, tzOffset: string | null | undefined): number | null {
+  if (!localISO || !tzOffset) return null;
+  const m = tzOffset.match(/^([+-])(\d{1,2}):?(\d{2})$/);
+  if (!m) return null;
+  const sign = m[1] === '+' ? 1 : -1;
+  const offsetMinutes = sign * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10));
+  const stripped = localISO.replace(/[Zz]$/, '').replace(/[+-]\d{2}:?\d{2}$/, '');
+  const localDate = new Date(stripped + 'Z');
+  if (isNaN(localDate.getTime())) return null;
+  return localDate.getTime() - (offsetMinutes * 60 * 1000);
+}
+
+/**
+ * Get the best UTC departure time for a reservation.
+ * 
+ * NEW: Since the email parser now stores start_time as proper UTC (with Z suffix),
+ * we can parse it directly for new data. Falls back to timezone conversion for
+ * legacy data that may have local times stored without offset.
+ * 
+ * Priority: Direct UTC parse → Departure Timezone → airport lookup → naive parse.
+ */
+function getDepTimeUTC(reservation: Reservation): number {
+  // Priority 0: If start_time is already proper UTC (has Z or offset suffix),
+  // parse it directly — no conversion needed
+  if (reservation.start_time?.match(/[Zz]$|[+-]\d{2}:?\d{2}$/)) {
+    const directMs = new Date(reservation.start_time).getTime();
+    if (!isNaN(directMs)) return directMs;
+  }
+  
+  const details = reservation.details;
+  
+  // Priority 1: Explicit departure timezone from AI parser (legacy data)
+  const depTz = details?.['Departure Timezone'] as string | undefined;
+  if (depTz) {
+    const utcMs = toUTCMs(reservation.start_time, depTz);
+    if (utcMs !== null) return utcMs;
+  }
+  
+  // Priority 2: Airport code lookup (legacy fallback)
+  const depAirport = details?.['Departure Airport'] as string | undefined;
+  if (depAirport) {
+    const codeMatch = depAirport.match(/\b([A-Z]{3})\b/);
+    if (codeMatch) {
+      const tz = EDGE_AIRPORT_TZ[codeMatch[1]];
+      if (tz) {
+        const utcMs = toUTCMs(reservation.start_time, tz);
+        if (utcMs !== null) return utcMs;
+      }
+    }
+  }
+  
+  // Priority 3: Naive parse (Deno treats as UTC — may be off by timezone offset)
+  return new Date(reservation.start_time).getTime();
+}
+
+// Subset of airport timezone offsets for the edge function.
+// Covers the most common airports. For the full list, see src/lib/utils.ts.
+const EDGE_AIRPORT_TZ: Record<string, string> = {
+  // US Eastern
+  ATL: '-05:00', JFK: '-05:00', EWR: '-05:00', LGA: '-05:00', BOS: '-05:00',
+  MIA: '-05:00', FLL: '-05:00', MCO: '-05:00', PHL: '-05:00', CLT: '-05:00',
+  IAD: '-05:00', DCA: '-05:00', DTW: '-05:00', BNA: '-05:00',
+  // US Central
+  ORD: '-06:00', DFW: '-06:00', IAH: '-06:00', MSP: '-06:00', AUS: '-06:00',
+  // US Mountain
+  DEN: '-07:00', SLC: '-07:00', PHX: '-07:00',
+  // US Pacific
+  LAX: '-08:00', SFO: '-08:00', SEA: '-08:00', SAN: '-08:00', PDX: '-08:00',
+  // US Other
+  ANC: '-09:00', HNL: '-10:00',
+  // Canada
+  YYZ: '-05:00', YVR: '-08:00', YUL: '-05:00',
+  // Europe
+  LHR: '+00:00', CDG: '+01:00', AMS: '+01:00', FRA: '+01:00', MAD: '+01:00',
+  FCO: '+01:00', BCN: '+01:00', IST: '+03:00',
+  // Middle East
+  DXB: '+04:00', DOH: '+03:00',
+  // Asia
+  DEL: '+05:30', BOM: '+05:30', SIN: '+08:00', BKK: '+07:00', KUL: '+08:00',
+  CGK: '+07:00', DPS: '+08:00', MNL: '+08:00', SGN: '+07:00', HAN: '+07:00',
+  NRT: '+09:00', HND: '+09:00', KIX: '+09:00', ICN: '+09:00',
+  PEK: '+08:00', PVG: '+08:00', HKG: '+08:00', TPE: '+08:00',
+  // Oceania
+  SYD: '+11:00', MEL: '+11:00', AKL: '+13:00',
+  // South America
+  GRU: '-03:00', EZE: '-03:00', BOG: '-05:00', LIM: '-05:00',
+  // Caribbean / Mexico
+  CUN: '-05:00', MEX: '-06:00', SJU: '-04:00',
+};
+
+/**
  * Check if a reservation is within the trackable window.
  * AirLabs only returns today's real-time data, so we should only call it
  * for flights departing within -24h to +36h of now.
@@ -449,6 +547,10 @@ function cleanFlightNumber(input: string): string | null {
  * IMPORTANT: If the stored status shows the flight is "active" (in the air),
  * ALWAYS allow tracking regardless of departure time — we need to fetch the
  * "landed" status when it arrives.
+ * 
+ * TIMEZONE-AWARE: Uses departure timezone to compute real UTC departure time.
+ * Without this, a flight at 11:00 JST (02:00 UTC) would be treated as
+ * 11:00 UTC on Deno, making the trackable window 9 hours late.
  */
 function isWithinTrackableWindow(reservation: Reservation): boolean {
   // Override: if flight is currently active (in the air), always track it
@@ -459,8 +561,8 @@ function isWithinTrackableWindow(reservation: Reservation): boolean {
   }
 
   const now = Date.now();
-  const depTime = new Date(reservation.start_time).getTime();
-  const hoursUntil = (depTime - now) / (1000 * 60 * 60);
+  const depTimeMs = getDepTimeUTC(reservation);
+  const hoursUntil = (depTimeMs - now) / (1000 * 60 * 60);
   // -24h (departed up to 24h ago — covers longest flights ~20h) to +36h (departing within next 36h)
   return hoursUntil >= -24 && hoursUntil <= 36;
 }
@@ -486,9 +588,9 @@ function isCorrectFlightDate(
   apiStatus: FlightStatusData,
   reservation: Reservation
 ): boolean {
-  // Use LOCAL dep_scheduled (not UTC) because reservation.start_time
-  // is typically local airport time (possibly stored without proper offset).
-  // Comparing local-to-local dates avoids UTC offset mismatches.
+  // API dep_scheduled is LOCAL airport time (e.g. "2026-02-17 11:00").
+  // We need to compare it against the LOCAL departure date, not the UTC date
+  // from start_time (which could be a different calendar day for large offsets).
   const apiDepTimeStr = apiStatus.dep_scheduled;
 
   if (!apiDepTimeStr) {
@@ -496,11 +598,16 @@ function isCorrectFlightDate(
     return true;
   }
 
-  // Extract just the date portion (YYYY-MM-DD) from both
-  // API dep_scheduled is like "2026-02-11 10:15" or "2026-02-11T10:15:00"
-  const apiDateStr = apiDepTimeStr.substring(0, 10); // "2026-02-11"
-  // Reservation start_time is like "2026-02-12T10:10:00+00:00"
-  const resDateStr = reservation.start_time.substring(0, 10); // "2026-02-12"
+  // Extract just the date portion (YYYY-MM-DD) from API
+  const apiDateStr = apiDepTimeStr.substring(0, 10); // "2026-02-17"
+  
+  // For the reservation, prefer the LOCAL start time from details
+  // (since start_time is now UTC and may have a different calendar date)
+  const details = reservation.details;
+  const localStartTime = details?.['Local Start Time'] as string | undefined;
+  const resDateStr = localStartTime
+    ? localStartTime.substring(0, 10)  // Local date from details
+    : reservation.start_time.substring(0, 10);  // Fallback to start_time date
 
   // Parse as simple dates (no timezone conversion)
   const apiDate = new Date(apiDateStr + "T00:00:00Z").getTime();
@@ -510,7 +617,7 @@ function isCorrectFlightDate(
   if (diffDays > 1) {
     console.log(
       `[Flight Guard] Rejecting ${apiStatus.flight_iata} data: ` +
-      `API dep_scheduled date=${apiDateStr} vs reservation date=${resDateStr} ` +
+      `API dep_scheduled date=${apiDateStr} vs reservation local date=${resDateStr} ` +
       `(${diffDays} day(s) apart — wrong flight instance)`
     );
     return false;
@@ -868,10 +975,11 @@ function shouldCheckNow(reservation: Reservation): boolean {
     return timeSinceCheck > 5 * 60 * 1000; // Check every 5 min for baggage
   }
 
-  const departureTime = new Date(reservation.start_time);
+  // TIMEZONE-AWARE: Use getDepTimeUTC for accurate hours-until-departure
+  const depTimeMs = getDepTimeUTC(reservation);
   const now = new Date();
   const hoursUntilDeparture =
-    (departureTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+    (depTimeMs - now.getTime()) / (1000 * 60 * 60);
 
   // Determine required interval based on tiered strategy
   let requiredIntervalMs: number;

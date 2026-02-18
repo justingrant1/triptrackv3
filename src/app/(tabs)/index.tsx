@@ -44,7 +44,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useUpcomingTrips } from '@/lib/hooks/useTrips';
 import { useUpcomingReservations } from '@/lib/hooks/useReservations';
 import type { Reservation } from '@/lib/types/database';
-import { formatTime, formatDate, formatDateFromISO, getCountdown, isToday, isTomorrow, isTodayISO, isTomorrowISO, getFlightAwareCountdown, getContextualTimeInfo, getFlightDepartureUTC, getReservationStartUTC, parseDateOnly } from '@/lib/utils';
+import { formatTime, formatDate, formatDateFromISO, getCountdown, isToday, isTomorrow, isTodayISO, isTomorrowISO, getFlightAwareCountdown, getContextualTimeInfo, getFlightDepartureUTC, getReservationStartUTC, parseDateOnly, isReservationToday, isReservationTomorrow, getReservationDateLabel } from '@/lib/utils';
 import { useAuthStore } from '@/lib/state/auth-store';
 import { useProfile } from '@/lib/hooks/useProfile';
 import { getWeatherIcon } from '@/lib/weather';
@@ -112,9 +112,9 @@ function isInProgress(reservation: Reservation, allReservations: Reservation[]):
   }
 
   // Non-flight reservations: in progress if started but not ended
-  // BUG FIX: Use timezone-aware start time
+  // BUG FIX: Use timezone-aware start and end times
   const startTime = getReservationStartUTC(reservation);
-  const endTime = reservation.end_time ? new Date(reservation.end_time) : null;
+  const endTime = reservation.end_time ? getReservationStartUTC({ ...reservation, start_time: reservation.end_time }) : null;
 
   const hasStarted = startTime.getTime() < now.getTime();
   const hasEnded = endTime ? endTime.getTime() < now.getTime() : false;
@@ -696,7 +696,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
               {timeInfo.time}
             </Text>
             <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-              {timeInfo.label}{' · '}{isTodayISO(reservation.start_time) ? 'Today' : isTomorrowISO(reservation.start_time) ? 'Tomorrow' : formatDateFromISO(reservation.start_time)}
+              {timeInfo.label}{' · '}{getReservationDateLabel(reservation)}
             </Text>
           </View>
           {expanded ? (
@@ -1070,8 +1070,10 @@ export default function TodayScreen() {
   const nextUpIndex = nextUp ? upcomingReservations.indexOf(nextUp) : -1;
   
   // Separate today vs later (include cancelled ones in the list, just not as "Next Up")
-  // BUG FIX: Use isTodayISO to avoid timezone conversion
-  const todayReservations = upcomingReservations.filter(r => isTodayISO(r.start_time));
+  // TIMEZONE-AWARE: Use isReservationToday which checks the event's timezone,
+  // not just the device's local date. This ensures a hotel check-in in Bali (UTC+8)
+  // shows as "today" even when it's still yesterday in New York (UTC-5).
+  const todayReservations = upcomingReservations.filter(r => isReservationToday(r));
   
   // Split today's reservations into categories
   const inProgressItems = todayReservations.filter(r => isInProgress(r, upcomingReservations));
