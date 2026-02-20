@@ -514,7 +514,35 @@ async function findOrCreateTripForEmail(
     }
   }
 
-  // === No match found — create new trip ===
+  // === No match found — create new trip (with race-condition protection) ===
+  // Multiple concurrent emails for the same destination can reach this point
+  // simultaneously (e.g., flight + hotel forwarded at the same time).
+  // We use a brief delay + re-check pattern to let the first one win.
+  
+  // Small random delay (100-500ms) to desynchronize concurrent requests
+  const jitterMs = 100 + Math.random() * 400;
+  await new Promise(resolve => setTimeout(resolve, jitterMs));
+  
+  // Re-check after delay — another request may have created the trip by now
+  const { data: recheck } = await supabase
+    .from('trips')
+    .select('id, start_date, end_date, name, destination')
+    .eq('user_id', userId)
+    .gte('end_date', bufferedStartStr)
+    .lte('start_date', bufferedEndStr);
+
+  if (recheck && recheck.length > 0) {
+    // Check for exact or fuzzy match among newly created trips
+    for (const trip of recheck) {
+      if (trip.destination === destination || areDestinationsRelated(destination, country, region, trip.destination, trip.name)) {
+        console.log(`[Race Protection] Found trip created by concurrent request — using trip: ${trip.id} (${trip.name})`);
+        await expandTripDates(supabase, trip, start_date, end_date);
+        return trip.id;
+      }
+    }
+  }
+
+  // Still no match — safe to create
   const { data: newTrip, error: tripError } = await supabase
     .from('trips')
     .insert({
