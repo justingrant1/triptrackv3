@@ -17,6 +17,7 @@ import {
 import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useAIConsent } from '@/lib/hooks/useAIConsent';
 import { useSyncStore } from '@/lib/state/sync-store';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import {
@@ -113,7 +114,13 @@ export default function ConnectedAccountsScreen() {
     }
   };
 
+  const { checkAndRequestConsent } = useAIConsent();
+
   const handleConnectGmail = async () => {
+    // Check AI data sharing consent (Apple Guidelines 5.1.1(i) & 5.1.2(i))
+    const consented = await checkAndRequestConsent();
+    if (!consented) return;
+
     // Check if user can connect Gmail (Pro feature)
     if (!canConnectGmail) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -513,28 +520,6 @@ export default function ConnectedAccountsScreen() {
                   )}
                 </Pressable>
 
-                {/* Outlook */}
-                <Pressable
-                  onPress={handleConnectOutlook}
-                  className="bg-slate-800/50 rounded-2xl p-4 flex-row items-center border border-slate-700/50"
-                >
-                  <View className="w-12 h-12 rounded-xl bg-white items-center justify-center">
-                    <Image
-                      source={{ uri: providerInfo.outlook.logo }}
-                      className="w-7 h-7"
-                      resizeMode="contain"
-                    />
-                  </View>
-                  <View className="flex-1 ml-3">
-                    <Text className="text-white font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                      Connect Outlook
-                    </Text>
-                    <Text className="text-slate-400 text-sm" style={{ fontFamily: 'DMSans_400Regular' }}>
-                      Auto-import from Microsoft 365
-                    </Text>
-                  </View>
-                  <Plus size={20} color="#64748B" />
-                </Pressable>
               </View>
             </Animated.View>
           )}

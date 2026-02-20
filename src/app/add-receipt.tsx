@@ -23,6 +23,7 @@ import { useCreateReceipt } from '@/lib/hooks/useReceipts';
 import { supabase } from '@/lib/supabase';
 import { extractReceiptData } from '@/lib/openai';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useAIConsent } from '@/lib/hooks/useAIConsent';
 import { UpgradeModal, UpgradeReason } from '@/components/UpgradeModal';
 import type { Trip, Receipt } from '@/lib/types/database';
 
@@ -58,6 +59,7 @@ export default function AddReceiptScreen() {
   const [upgradeReason, setUpgradeReason] = React.useState<UpgradeReason>('receipt-ocr');
 
   const { canScanReceipt, canCreateReceipt } = useSubscription();
+  const { checkAndRequestConsent } = useAIConsent();
   const isSaving = createReceipt.isPending;
   const isValid = merchant.trim() && amount.trim() && selectedTrip;
 
@@ -114,6 +116,10 @@ export default function AddReceiptScreen() {
   };
 
   const handleScanReceipt = async () => {
+    // Check AI data sharing consent (Apple Guidelines 5.1.1(i) & 5.1.2(i))
+    const consented = await checkAndRequestConsent();
+    if (!consented) return;
+
     // Check if user can scan receipts (Pro feature)
     if (!canScanReceipt) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);

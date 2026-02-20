@@ -8,6 +8,7 @@ import Animated, { FadeInDown, FadeInUp, FadeInRight } from 'react-native-reanim
 import * as Haptics from 'expo-haptics';
 import { useChat } from '@/lib/hooks/useChat';
 import { useSubscription, incrementAIMessageCount } from '@/lib/hooks/useSubscription';
+import { useAIConsent } from '@/lib/hooks/useAIConsent';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -60,6 +61,7 @@ export default function ConciergeModal() {
   
   const { messages, isLoading, error, suggestions, sendMessageStreaming, clearMessages } = useChat();
   const { canUseAI } = useSubscription();
+  const { checkAndRequestConsent } = useAIConsent();
 
   const handleClose = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -68,6 +70,10 @@ export default function ConciergeModal() {
 
   const handleSend = async () => {
     if (query.trim() && !isLoading) {
+      // Check AI data sharing consent (Apple Guidelines 5.1.1(i) & 5.1.2(i))
+      const consented = await checkAndRequestConsent();
+      if (!consented) return;
+
       // Check AI message limit
       if (!canUseAI) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -93,6 +99,10 @@ export default function ConciergeModal() {
   };
 
   const handleSuggestion = async (text: string) => {
+    // Check AI data sharing consent (Apple Guidelines 5.1.1(i) & 5.1.2(i))
+    const consented = await checkAndRequestConsent();
+    if (!consented) return;
+
     // Check AI message limit
     if (!canUseAI) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);

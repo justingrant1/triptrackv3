@@ -26,6 +26,7 @@ import {
   CalendarDays,
   DollarSign,
   Crown,
+  Brain,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -44,6 +45,7 @@ import { useConnectedAccounts } from '@/lib/hooks/useConnectedAccounts';
 import { useTrips } from '@/lib/hooks/useTrips';
 import { useAllReceipts } from '@/lib/hooks/useReceipts';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useAIConsent } from '@/lib/hooks/useAIConsent';
 import { Alert, Image } from 'react-native';
 import { deleteAccount } from '@/lib/auth';
 import { parseDateOnly } from '@/lib/utils';
@@ -128,6 +130,7 @@ export default function ProfileScreen() {
   const { data: trips = [] } = useTrips();
   const { data: allReceipts = [] } = useAllReceipts();
   const { isPro } = useSubscription();
+  const { hasConsent, isLoading: consentLoading, grantConsent, revokeConsent } = useAIConsent();
   const [copied, setCopied] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const [showHowItWorks, setShowHowItWorks] = React.useState(false);
@@ -658,11 +661,92 @@ export default function ProfileScreen() {
                 trailing={<ExternalLink size={16} color="#64748B" />}
               />
               <MenuItem
+                icon={<Brain size={18} color="#8B5CF6" />}
+                iconColor="#8B5CF6"
+                label="AI Data Usage"
+                sublabel="How your data powers AI features"
+                onPress={() => {
+                  Alert.alert(
+                    'AI Data Usage',
+                    'TripTrack uses OpenAI to power the following features:\n\n' +
+                    '💬 AI Concierge — Your chat messages and trip details are sent to generate helpful responses.\n\n' +
+                    '📧 Email Parsing — Travel confirmation emails are sent to extract trip details.\n\n' +
+                    '🧾 Receipt & Boarding Pass Scanning — Images are sent to extract amounts and flight info.\n\n' +
+                    'Your data is processed securely, never sold, and only used to provide these features. See our Privacy Policy for full details.',
+                    [
+                      { text: 'Privacy Policy', onPress: () => Linking.openURL('https://triptrack.ai/privacy') },
+                      { text: 'OK', style: 'default' },
+                    ]
+                  );
+                }}
+                index={8}
+              />
+              <MenuItem
+                icon={<Shield size={18} color={hasConsent ? '#10B981' : '#64748B'} />}
+                iconColor={hasConsent ? '#10B981' : '#64748B'}
+                label="AI Data Sharing"
+                sublabel={hasConsent ? 'Enabled — tap to revoke' : 'Disabled — AI features require consent'}
+                onPress={() => {
+                  if (hasConsent) {
+                    Alert.alert(
+                      'Revoke AI Data Sharing',
+                      'This will disable AI-powered features including the AI Concierge, email parsing, receipt scanning, and boarding pass extraction.\n\nYou can re-enable this at any time.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Revoke Consent',
+                          style: 'destructive',
+                          onPress: () => {
+                            revokeConsent();
+                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                          },
+                        },
+                      ]
+                    );
+                  } else {
+                    Alert.alert(
+                      'Enable AI Data Sharing',
+                      'TripTrack uses OpenAI to power AI features. When enabled, the following data may be sent to OpenAI:\n\n' +
+                      '• Chat messages & trip details (AI Concierge)\n' +
+                      '• Travel confirmation emails (Email Parsing)\n' +
+                      '• Receipt & boarding pass images (Scanning)\n\n' +
+                      'Your data is processed securely and never sold. See our Privacy Policy for details.',
+                      [
+                        { text: 'Privacy Policy', onPress: () => Linking.openURL('https://triptrack.ai/privacy') },
+                        {
+                          text: 'Enable',
+                          onPress: () => {
+                            grantConsent();
+                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                          },
+                        },
+                        { text: 'Cancel', style: 'cancel' },
+                      ]
+                    );
+                  }
+                }}
+                index={9}
+                trailing={
+                  <View style={{
+                    width: 44, height: 26, borderRadius: 13,
+                    backgroundColor: hasConsent ? '#10B981' : '#334155',
+                    justifyContent: 'center',
+                    paddingHorizontal: 2,
+                  }}>
+                    <View style={{
+                      width: 22, height: 22, borderRadius: 11,
+                      backgroundColor: '#FFFFFF',
+                      alignSelf: hasConsent ? 'flex-end' : 'flex-start',
+                    }} />
+                  </View>
+                }
+              />
+              <MenuItem
                 icon={<Shield size={18} color="#10B981" />}
                 iconColor="#10B981"
                 label="Terms of Service"
                 onPress={() => Linking.openURL('https://triptrack.ai/terms')}
-                index={8}
+                index={9}
                 trailing={<ExternalLink size={16} color="#64748B" />}
               />
               <MenuItem
@@ -670,7 +754,7 @@ export default function ProfileScreen() {
                 iconColor="#10B981"
                 label="Privacy Policy"
                 onPress={() => Linking.openURL('https://triptrack.ai/privacy')}
-                index={9}
+                index={10}
                 trailing={<ExternalLink size={16} color="#64748B" />}
                 isLast
               />

@@ -38,6 +38,7 @@ import {
   deleteBoardingPassFromReservation,
 } from '@/lib/boarding-pass';
 import type { BoardingPassData } from '@/lib/boarding-pass';
+import { useAIConsent } from '@/lib/hooks/useAIConsent';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const QR_SIZE = SCREEN_WIDTH - 80;
@@ -86,7 +87,13 @@ export default function BoardingPassScreen() {
 
   // ─── Pick Image ────────────────────────────────────────────────────────────
 
+  const { checkAndRequestConsent } = useAIConsent();
+
   const handlePickImage = async () => {
+    // Check AI data sharing consent (Apple Guidelines 5.1.1(i) & 5.1.2(i))
+    const consented = await checkAndRequestConsent();
+    if (!consented) return;
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();

@@ -65,12 +65,48 @@ Added "AI Data Usage" menu item in the Support section that shows an Alert dialo
 
 Privacy Policy link was already present in the Support section → `https://triptrack.ai/privacy`
 
+### 5. Runtime Consent Gates (Feb 20, 2026)
+
+**File:** `src/lib/hooks/useAIConsent.ts`
+
+Created a reusable hook that checks AsyncStorage for `ai_data_consent` before any AI feature runs. If consent hasn't been granted, it shows an Alert dialog that:
+- ✅ **Discloses what data is sent** — Lists specific data types
+- ✅ **Identifies who data is sent to** — Names "OpenAI" explicitly
+- ✅ **Obtains user permission** — "Allow" button grants consent, "Don't Allow" blocks the feature
+- ✅ **Links to Privacy Policy** — Tappable link in the alert
+
+**Consent gates added to every AI feature entry point:**
+
+| Screen | File | AI Feature Blocked |
+|--------|------|--------------------|
+| AI Concierge | `src/app/modal.tsx` | Chat with AI |
+| Receipt Scanner | `src/app/add-receipt.tsx` | AI receipt scan |
+| Boarding Pass | `src/app/boarding-pass.tsx` | AI boarding pass extraction |
+| Email Parser | `src/app/parse-email.tsx` | AI email parsing |
+| Gmail Connect | `src/app/connected-accounts.tsx` | Gmail auto-scan (sends to AI) |
+
+### 6. AI Data Sharing Toggle in Profile
+
+**File:** `src/app/(tabs)/profile.tsx`
+
+Added "AI Data Sharing" toggle in the Support section that:
+- Shows current consent status with a visual toggle switch
+- Allows users to **revoke consent** at any time (with confirmation)
+- Allows users to **re-enable consent** with full disclosure
+- Links to Privacy Policy from the enable dialog
+
 ## Files Changed
 
 | File | Change |
 |------|--------|
 | `src/app/onboarding.tsx` | Added 5th privacy/consent slide, Skip→privacy redirect, consent storage, fixed Privacy Policy URL |
-| `src/app/(tabs)/profile.tsx` | Added "AI Data Usage" menu item with Brain icon |
+| `src/app/(tabs)/profile.tsx` | Added "AI Data Usage" info, "AI Data Sharing" toggle with revoke/grant |
+| `src/lib/hooks/useAIConsent.ts` | **NEW** — Reusable consent hook with `checkAndRequestConsent()`, `hasConsent`, `grantConsent()`, `revokeConsent()` |
+| `src/app/modal.tsx` | Added consent gate before AI chat |
+| `src/app/add-receipt.tsx` | Added consent gate before receipt scan |
+| `src/app/boarding-pass.tsx` | Added consent gate before boarding pass extraction |
+| `src/app/parse-email.tsx` | Added consent gate before email parsing |
+| `src/app/connected-accounts.tsx` | Added consent gate before Gmail connect |
 
 ### Bug Fix (Feb 19, 2026 — Session 2)
 - Fixed Privacy Policy URL in onboarding slide: `triptrack.com/privacy` → `triptrack.ai/privacy` (now consistent with profile screen)
@@ -81,10 +117,12 @@ Suggested response to Apple:
 
 > We have addressed the privacy concerns in our updated build:
 >
-> 1. **Onboarding consent screen** — A new 5th onboarding slide clearly discloses that user data (chat messages, travel emails, receipt/boarding pass images) is sent to OpenAI to power AI features. Users must view this screen and tap "Get Started" to consent before using the app.
+> 1. **Onboarding consent screen** — A new 5th onboarding slide clearly discloses that user data (chat messages, travel emails, receipt/boarding pass images) is sent to OpenAI to power AI features. Users must view this screen and tap "Get Started" to consent before using the app. The Skip button redirects to the consent slide rather than bypassing it.
 >
-> 2. **AI Data Usage section** — Available in Profile → Support → AI Data Usage, providing detailed information about what data each AI feature sends and to whom.
+> 2. **Runtime consent gates** — Every AI-powered feature (AI Concierge, email parsing, receipt scanning, boarding pass extraction, Gmail connect) now checks for consent before sending any data. If consent hasn't been granted, a dialog appears explaining what data will be sent, identifying OpenAI as the recipient, and requiring explicit "Allow" permission. Users can decline and still use non-AI features.
 >
-> 3. **Privacy Policy** — Accessible from both the onboarding consent screen and the Profile screen, detailing all data collection, usage, and third-party sharing practices.
+> 3. **AI Data Sharing toggle** — Available in Profile → Support → AI Data Sharing, users can revoke or re-grant AI data sharing consent at any time with a toggle switch and confirmation dialog.
 >
-> Users cannot skip the privacy consent screen during onboarding — the Skip button redirects to the consent slide rather than bypassing it.
+> 4. **AI Data Usage disclosure** — Available in Profile → Support → AI Data Usage, providing detailed information about what data each AI feature sends and to whom.
+>
+> 5. **Privacy Policy** — Accessible from the onboarding consent screen, runtime consent dialogs, and the Profile screen, detailing all data collection, usage, and third-party sharing practices.

@@ -7,6 +7,7 @@ import { X, Sparkles, Mail, CheckCircle } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { parseEmailToReservation } from '@/lib/openai';
+import { useAIConsent } from '@/lib/hooks/useAIConsent';
 import { useCreateTrip } from '@/lib/hooks/useTrips';
 import { useCreateReservation } from '@/lib/hooks/useReservations';
 import { useAuthStore } from '@/lib/state/auth-store';
@@ -25,6 +26,7 @@ export default function ParseEmailScreen() {
   const createTrip = useCreateTrip();
   const createReservation = useCreateReservation();
   const { canUseEmailParsing } = useSubscription();
+  const { checkAndRequestConsent } = useAIConsent();
 
   const handleParse = async () => {
     if (!emailText.trim()) {
@@ -32,6 +34,10 @@ export default function ParseEmailScreen() {
       Alert.alert('Empty Email', 'Please paste your travel confirmation email');
       return;
     }
+
+    // Check AI data sharing consent (Apple Guidelines 5.1.1(i) & 5.1.2(i))
+    const consented = await checkAndRequestConsent();
+    if (!consented) return;
 
     // Check if user can use email parsing (Pro feature)
     if (!canUseEmailParsing) {
