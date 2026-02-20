@@ -224,7 +224,7 @@ $$;
 
 ## Success Criteria
 
-✅ Deleted trips no longer reappear when new emails arrive
+✅ Deleted trips no l onger reappear when new emails arrive
 ✅ System logs show `[Deleted Trip Block]` messages
 ✅ Fuzzy matching catches destination variations
 ✅ No false positives (legitimate new trips are not blocked)

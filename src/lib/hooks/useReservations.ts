@@ -270,6 +270,58 @@ export function useUpcomingReservations() {
 }
 
 /**
+ * Get the destination timezone offset for a trip.
+ * 
+ * Fetches the timezone from the first reservation's details (AI-provided).
+ * Used by the trips list badge to show timezone-aware "Starts today" / "Starts tomorrow".
+ * 
+ * Returns a UTC offset string like "+09:00" or "-05:00", or null if unavailable.
+ * Lightweight query — only fetches one row with minimal columns.
+ */
+export function useTripTimezone(tripId: string | undefined) {
+  return useQuery({
+    queryKey: ['trip-timezone', tripId],
+    queryFn: async () => {
+      if (!tripId) return null;
+
+      // Fetch the first reservation's details to extract timezone info
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('type, details')
+        .eq('trip_id', tripId)
+        .order('start_time', { ascending: true })
+        .limit(1);
+
+      if (error || !data || data.length === 0) return null;
+
+      const reservation = data[0];
+      const details = reservation.details as Record<string, any> | null;
+      if (!details) return null;
+
+      // For the trip badge, we want the DESTINATION timezone to determine
+      // "starts today" vs "starts tomorrow". The trip start_date represents
+      // when you arrive, so we check what date it is THERE.
+      // Priority: Arrival Timezone > Location Timezone > Departure Timezone
+      // (opposite of getReservationTimezone which is for departure-time display)
+      const arrTz = details['Arrival Timezone'] as string | undefined;
+      if (arrTz) return arrTz;
+
+      const locTz = details['Location Timezone'] as string | undefined;
+      if (locTz) return locTz;
+
+      if (reservation.type === 'flight') {
+        const depTz = details['Departure Timezone'] as string | undefined;
+        if (depTz) return depTz;
+      }
+
+      return null;
+    },
+    enabled: !!tripId,
+    staleTime: 1000 * 60 * 30, // 30 minutes — timezone doesn't change often
+  });
+}
+
+/**
  * Get reservation counts by type for a trip
  */
 export function useReservationCounts(tripId: string | undefined) {

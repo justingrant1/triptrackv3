@@ -44,14 +44,14 @@ import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTrips, useDeleteTrip } from '@/lib/hooks/useTrips';
-import { useReservationCounts } from '@/lib/hooks/useReservations';
+import { useReservationCounts, useTripTimezone } from '@/lib/hooks/useReservations';
 import { useConnectedAccounts, useSyncGmail } from '@/lib/hooks/useConnectedAccounts';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useForwardingAddress } from '@/lib/hooks/useProfile';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import * as Clipboard from 'expo-clipboard';
 import type { Trip } from '@/lib/types/database';
-import { formatDateRange, getDaysUntil, parseDateOnly } from '@/lib/utils';
+import { formatDateRange, getDaysUntil, getDaysUntilInTimezone, parseDateOnly } from '@/lib/utils';
 import { getWeatherIcon } from '@/lib/weather';
 import { useWeather } from '@/lib/hooks/useWeather';
 import { updateTripStatuses } from '@/lib/trip-status';
@@ -323,10 +323,19 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
   // Compose: pan takes priority over tap — both in same gesture system
   const composedGesture = Gesture.Race(panGesture, tapGesture);
 
-  const daysUntil = getDaysUntil(parseDateOnly(trip.start_date));
   const isActive = trip.status === 'active';
   const isUpcoming = trip.status === 'upcoming';
   const { data: weather } = useWeather(trip.destination);
+  // Fetch destination timezone for timezone-aware badge
+  // Only fetch for upcoming trips within 14 days (the only ones that show a badge)
+  const deviceDaysUntil = getDaysUntil(parseDateOnly(trip.start_date));
+  const { data: tripTimezone } = useTripTimezone(
+    isUpcoming && deviceDaysUntil <= 15 ? trip.id : undefined
+  );
+  // Use timezone-aware days calculation when we have the destination timezone
+  const daysUntil = tripTimezone
+    ? getDaysUntilInTimezone(parseDateOnly(trip.start_date), tripTimezone)
+    : deviceDaysUntil;
 
   const getStatusBadge = () => {
     if (isActive) {
@@ -340,6 +349,17 @@ function TripCard({ trip, index }: { trip: Trip; index: number }) {
       );
     }
     if (isUpcoming && daysUntil <= 14) {
+      // Handle negative days (trip started but status hasn't updated yet)
+      if (daysUntil < 0) {
+        const daysAgo = Math.abs(daysUntil);
+        return (
+          <View className="bg-amber-500/90 px-3 py-1 rounded-full">
+            <Text className="text-white text-xs font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
+              {daysAgo === 1 ? 'Started yesterday' : `Started ${daysAgo} days ago`}
+            </Text>
+          </View>
+        );
+      }
       return (
         <View className="bg-blue-500/90 px-3 py-1 rounded-full">
           <Text className="text-white text-xs font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>

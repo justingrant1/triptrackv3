@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -79,7 +79,7 @@ function isReservationCancelled(reservation: Reservation): boolean {
  * - Other reservations: start time has passed but end time hasn't (e.g., hotel stay)
  * 
  * TRAVEL-AWARE: Hotels and car rentals should NOT be "in progress" if there's
- * an active in-flight reservation — the traveler can't physically be using them yet.
+ * an active in-flight reservation â€” the traveler can't physically be using them yet.
  */
 function isInProgress(reservation: Reservation, allReservations: Reservation[]): boolean {
   const now = new Date();
@@ -120,7 +120,7 @@ function isInProgress(reservation: Reservation, allReservations: Reservation[]):
   const hasEnded = endTime ? endTime.getTime() < now.getTime() : false;
 
   // TRAVEL-AWARE: If there's an active in-flight reservation, hotels and car rentals
-  // can't be "in progress" yet — the traveler is still on the plane
+  // can't be "in progress" yet â€” the traveler is still on the plane
   if ((reservation.type === 'hotel' || reservation.type === 'car') && hasStarted && !hasEnded) {
     const activeFlightInProgress = allReservations.some(r => 
       r.type === 'flight' && r.id !== reservation.id && isInProgress(r, allReservations)
@@ -164,13 +164,13 @@ function isNextUpCandidate(reservation: Reservation): boolean {
     if (flightStatus) {
       const phase = flightStatus.flight_status;
 
-      // If API says landed → done, skip
+      // If API says landed â†’ done, skip
       if (phase === 'landed') return false;
 
-      // If API says active (in-flight) → user is on the plane, skip
+      // If API says active (in-flight) â†’ user is on the plane, skip
       if (phase === 'active') return false;
 
-      // If API says cancelled/incident/diverted → skip
+      // If API says cancelled/incident/diverted â†’ skip
       if (phase === 'cancelled' || phase === 'incident' || phase === 'diverted') return false;
 
       // Check for actual departure/arrival timestamps even if API phase is stale
@@ -183,13 +183,13 @@ function isNextUpCandidate(reservation: Reservation): boolean {
         if (arrEst.getTime() < now.getTime()) return false;
       }
 
-      // Live data says flight is still scheduled (possibly delayed) — it's actionable.
+      // Live data says flight is still scheduled (possibly delayed) â€” it's actionable.
       // Don't fall through to the time-based check which uses the original departure
       // time and would incorrectly exclude delayed flights that haven't departed yet.
       return true;
     }
 
-    // No live data — use scheduled departure time as fallback
+    // No live data â€” use scheduled departure time as fallback
     const depTime = getFlightDepartureUTC(reservation);
     const minsSinceDeparture = (now.getTime() - depTime.getTime()) / 60000;
     // If departure was >30 min ago and we have no live data, assume departed
@@ -204,13 +204,13 @@ function isNextUpCandidate(reservation: Reservation): boolean {
   const minsSinceStart = (now.getTime() - startTime.getTime()) / 60000;
   
   // Type-specific grace periods based on real-world travel patterns:
-  // - Hotels: 8 hours (check-in windows are typically 3 PM–11 PM)
+  // - Hotels: 8 hours (check-in windows are typically 3 PMâ€“11 PM)
   // - Car rentals: 4 hours (pickup counters are flexible, but not all day)
   // - Trains: 30 min (hard start time, like flights)
   // - Events/Meetings: 30 min (hard start time)
   switch (reservation.type) {
     case 'hotel':
-      // Hotels have the longest grace period — check-in is available all evening
+      // Hotels have the longest grace period â€” check-in is available all evening
       if (minsSinceStart > 480) return false; // 8 hours
       break;
     case 'car':
@@ -220,7 +220,7 @@ function isNextUpCandidate(reservation: Reservation): boolean {
     case 'train':
     case 'event':
     case 'meeting':
-      // Hard start times — 30 min grace period
+      // Hard start times â€” 30 min grace period
       if (minsSinceStart > 30) return false;
       break;
     default:
@@ -298,7 +298,7 @@ function openDirections(destination: string, reservation?: Reservation) {
       ]
     );
   } else {
-    // Android — use Google Maps intent
+    // Android â€” use Google Maps intent
     Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`);
   }
 }
@@ -344,18 +344,18 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
   const liveGate = flightStatus?.dep_gate;
   const displayGate = liveGate ? `Gate ${liveGate}` : gateInfo;
 
-  // ─── Countdown Badge Visual System ─────────────────────────────────────────
+  // â”€â”€â”€ Countdown Badge Visual System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Each phase gets a unique gradient, icon, and animation personality
 
   const getCountdownGradient = (): [string, string] => {
     switch (smartCountdown.colorHint) {
-      case 'green': return ['#059669', '#10B981'];   // Landed — rich emerald
-      case 'blue': return ['#2563EB', '#3B82F6'];    // In Flight — vivid blue
-      case 'amber': return ['#D97706', '#F59E0B'];   // Boarding — warm amber
-      case 'red': return ['#DC2626', '#EF4444'];      // Cancelled — alert red
+      case 'green': return ['#059669', '#10B981'];   // Landed â€” rich emerald
+      case 'blue': return ['#2563EB', '#3B82F6'];    // In Flight â€” vivid blue
+      case 'amber': return ['#D97706', '#F59E0B'];   // Boarding â€” warm amber
+      case 'red': return ['#DC2626', '#EF4444'];      // Cancelled â€” alert red
       default: return smartCountdown.urgent
-        ? ['#D97706', '#F59E0B']                       // Urgent — amber
-        : ['#334155', '#475569'];                      // Default — subtle slate
+        ? ['#D97706', '#F59E0B']                       // Urgent â€” amber
+        : ['#334155', '#475569'];                      // Default â€” subtle slate
     }
   };
 
@@ -443,7 +443,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
                 </View>
               </View>
 
-              {/* ✦ Hero Countdown Badge — gradient + glow + status icon */}
+              {/* âœ¦ Hero Countdown Badge â€” gradient + glow + status icon */}
               <View style={{ position: 'relative' }}>
                 {/* Animated glow layer behind the badge */}
                 {shouldPulse && (
@@ -527,7 +527,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
               </View>
             </View>
 
-            {/* Quick Info Row — contextual time label + gate/seat */}
+            {/* Quick Info Row â€” contextual time label + gate/seat */}
             <View className="flex-row items-center bg-slate-800/50 rounded-xl p-3 mb-3">
               <Clock size={16} color="#94A3B8" />
               <Text className="text-slate-400 text-xs ml-1.5 mr-1" style={{ fontFamily: 'DMSans_500Medium' }}>
@@ -572,7 +572,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
               </View>
             )}
 
-            {/* Flight Status Bar — always visible for flights with live data */}
+            {/* Flight Status Bar â€” always visible for flights with live data */}
             {reservation.type === 'flight' && (() => {
               const flightStatus = getStoredFlightStatus(reservation);
               if (!flightStatus) return null;
@@ -583,7 +583,7 @@ function NextUpCard({ reservation }: { reservation: Reservation }) {
               );
             })()}
 
-            {/* Expanded Details — uses same beautiful component as trip detail page */}
+            {/* Expanded Details â€” uses same beautiful component as trip detail page */}
             {expanded && (
               <Animated.View entering={FadeInDown.duration(300)}>
                 <View className="mt-3 pt-3 border-t border-slate-700/50">
@@ -696,7 +696,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
               {timeInfo.time}
             </Text>
             <Text className="text-slate-500 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-              {timeInfo.label}{' · '}{getReservationDateLabel(reservation)}
+              {timeInfo.label}{' \u00B7 '}{getReservationDateLabel(reservation)}
             </Text>
           </View>
           {expanded ? (
@@ -706,7 +706,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
           )}
         </View>
 
-        {/* Compact Flight Status Bar — always visible for flights with live data */}
+        {/* Compact Flight Status Bar â€” always visible for flights with live data */}
         {reservation.type === 'flight' && !cancelled && (() => {
           const flightStatus = getStoredFlightStatus(reservation);
           if (!flightStatus) return null;
@@ -717,7 +717,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
           );
         })()}
 
-        {/* Expanded Details — uses same beautiful component as trip detail page */}
+        {/* Expanded Details â€” uses same beautiful component as trip detail page */}
         {expanded && (
           <Animated.View entering={FadeInDown.duration(250)}>
             <View className="mt-3 pt-3 border-t border-slate-700/50">
@@ -745,7 +745,7 @@ function UpcomingItem({ reservation, index }: { reservation: Reservation; index:
 }
 
 /**
- * Rich card for in-progress flights — shows full flight status bar with timeline
+ * Rich card for in-progress flights â€” shows full flight status bar with timeline
  */
 function InProgressFlightCard({ reservation, index }: { reservation: Reservation; index: number }) {
   const router = useRouter();
@@ -801,7 +801,7 @@ function InProgressFlightCard({ reservation, index }: { reservation: Reservation
               </View>
             </View>
 
-            {/* Full Flight Status Bar — the hero element */}
+            {/* Full Flight Status Bar â€” the hero element */}
             {flightStatus && (
               <View className="mb-3">
                 <FlightStatusBar status={flightStatus} compact={false} />
@@ -881,7 +881,7 @@ function QuickAction({ icon, label, color, onPress }: { icon: React.ReactNode; l
   };
 
   const handlePressOut = () => {
-    // Only animate back — don't trigger action here (scroll-safe)
+    // Only animate back â€” don't trigger action here (scroll-safe)
     scale.value = withSpring(1);
   };
 
@@ -926,7 +926,7 @@ export default function TodayScreen() {
   const { data: unreadCount = 0 } = useUnreadNotificationCount();
   const { data: profile } = useProfile();
 
-  // ─── Tab Focus Refresh ─────────────────────────────────────────────────────
+  // â”€â”€â”€ Tab Focus Refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // When the user switches to the Today tab, silently refetch stale data.
   // Cached data shows instantly; fresh data swaps in seamlessly in the background.
   useFocusEffect(
@@ -986,12 +986,12 @@ export default function TodayScreen() {
 
   const getGreetingEmoji = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return '☀️';
-    if (hour < 18) return '👋';
-    return '🌙';
+    if (hour < 12) return '\u2600\uFE0F';
+    if (hour < 18) return '\uD83D\uDC4B';
+    return '\uD83C\uDF19';
   };
 
-  // Flight status refresh mutation — triggers the edge function to get fresh data from AirLabs
+  // Flight status refresh mutation â€” triggers the edge function to get fresh data from AirLabs
   const refreshFlightStatus = useRefreshFlightStatus();
 
   // Find trip IDs that have flight reservations (for flight status refresh)
@@ -1005,7 +1005,7 @@ export default function TodayScreen() {
     return Array.from(ids);
   }, [upcomingReservations]);
 
-  // ─── Pull-to-Refresh ──────────────────────────────────────────────────────
+  // â”€â”€â”€ Pull-to-Refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Note: Automatic flight status polling is handled by:
   // 1. Trip detail page (useFlightStatusPolling hook)
   // 2. Server-side cron job (every 15 min)
@@ -1013,7 +1013,7 @@ export default function TodayScreen() {
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
     try {
-      // Update trip statuses first (active → completed if end date passed)
+      // Update trip statuses first (active â†’ completed if end date passed)
       if (user?.id) {
         await updateTripStatuses(user.id).catch(() => {});
       }
@@ -1064,7 +1064,7 @@ export default function TodayScreen() {
     return endDate >= today;
   });
   
-  // Smart "Next Up" — only show reservations the user still needs to act on
+  // Smart "Next Up" â€” only show reservations the user still needs to act on
   // Skips: cancelled, departed, in-flight, landed flights, and past events
   const nextUp = upcomingReservations.find(r => isNextUpCandidate(r)) ?? null;
   const nextUpIndex = nextUp ? upcomingReservations.indexOf(nextUp) : -1;
@@ -1085,14 +1085,98 @@ export default function TodayScreen() {
   // Get upcoming reservations in next 48 hours (for "Coming Up" section)
   const upcoming48h = upcomingReservations;
 
-  // Get weather for active trip
-  const { data: weather } = useWeather(activeTrip?.destination);
+  // â”€â”€â”€ Smart Travel Context â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Determines what city + weather to show in the header badge:
+  // 1. Active trip â†’ infer current city from reservations (most recent arrival/hotel)
+  // 2. Upcoming trip within 24 hours â†’ show destination city
+  // 3. No travel context â†’ show nothing (user is home)
+  
+  const travelContext = React.useMemo(() => {
+    const now = new Date();
+
+    // Priority 1: Active trip â€” infer current city from itinerary
+    if (activeTrip) {
+      let currentCity = activeTrip.destination; // fallback
+
+      // Look through upcoming reservations for this trip to find where the user IS
+      // Sort by start_time descending to find the most recent one that's already started
+      const tripReservations = upcomingReservations
+        .filter(r => r.trip_id === activeTrip.id)
+        .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+
+      for (const res of tripReservations) {
+        const startTime = new Date(res.start_time);
+        if (startTime.getTime() > now.getTime()) continue; // hasn't started yet
+
+        // This reservation has started â€” extract the city
+        if (res.type === 'flight') {
+          // For flights that have departed, use the arrival city
+          const arrivalCity = res.details?.['Arrival City'] || res.details?.['To'];
+          if (arrivalCity) {
+            // Clean up: "Tokyo (NRT)" â†’ "Tokyo"
+            currentCity = arrivalCity.replace(/\s*\([A-Z]{3}\)\s*/g, '').replace(/^[A-Z]{3}\s*[-â€“]\s*/, '').trim();
+            break;
+          }
+        } else if (res.type === 'hotel') {
+          // Hotel location is a strong signal of where the user is
+          const hotelCity = res.location || res.details?.['City'];
+          if (hotelCity) {
+            currentCity = hotelCity;
+            break;
+          }
+        } else if (res.type === 'train') {
+          const arrivalStation = res.details?.['Arrival Station'] || res.details?.['To'];
+          if (arrivalStation) {
+            currentCity = arrivalStation.replace(/\s*Station\s*/gi, '').trim();
+            break;
+          }
+        }
+      }
+
+      return {
+        city: currentCity,
+        tripId: activeTrip.id,
+        isActive: true,
+        label: null as string | null, // no extra label for active trips
+      };
+    }
+
+    // Priority 2: Upcoming trip within 24 hours
+    const soonestUpcoming = upcomingTrips.find(t => {
+      if (t.status !== 'upcoming') return false;
+      const startDate = parseDateOnly(t.start_date);
+      const hoursUntil = (startDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+      return hoursUntil <= 24 && hoursUntil > -24; // within 24h window
+    });
+
+    if (soonestUpcoming) {
+      const startDate = parseDateOnly(soonestUpcoming.start_date);
+      const hoursUntil = (startDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+      let label = 'Departing soon';
+      if (hoursUntil <= 0) label = 'Starts today';
+      else if (hoursUntil <= 6) label = `In ${Math.ceil(hoursUntil)}h`;
+      else label = 'Tomorrow';
+
+      return {
+        city: soonestUpcoming.destination,
+        tripId: soonestUpcoming.id,
+        isActive: false,
+        label,
+      };
+    }
+
+    // Priority 3: No travel context â€” user is home
+    return null;
+  }, [activeTrip, upcomingTrips, upcomingReservations]);
+
+  // Get weather for the travel context city (active or upcoming)
+  const { data: weather } = useWeather(travelContext?.city ?? undefined);
 
   const handleNavigate = () => {
     if (nextUp?.address) {
       openDirections(nextUp.address, nextUp);
     } else if (nextUp) {
-      // No address — try to use departure airport for flights
+      // No address â€” try to use departure airport for flights
       const departureAirport = nextUp.details?.['Departure Airport'];
       if (departureAirport) {
         openDirections(`${departureAirport} Airport`, nextUp);
@@ -1247,39 +1331,103 @@ export default function TodayScreen() {
                   </Text>
                 </Animated.View>
 
-                {/* Active trip context — glassmorphic badge */}
-                {activeTrip && weather && (
+                {/* Smart travel context badge â€” active trip or upcoming within 24h */}
+                {travelContext && weather && (
                   <Animated.View entering={FadeInDown.duration(700).delay(200)}>
                     <Pressable
-                      onPress={handleActiveTripPress}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push(`/trip/${travelContext.tripId}`);
+                      }}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
                         marginTop: 12,
                         alignSelf: 'flex-start',
-                        backgroundColor: 'rgba(16,185,129,0.1)',
+                        backgroundColor: travelContext.isActive
+                          ? 'rgba(16,185,129,0.1)'
+                          : 'rgba(59,130,246,0.1)',
                         paddingHorizontal: 14,
                         paddingVertical: 8,
                         borderRadius: 20,
                         borderWidth: 1,
-                        borderColor: 'rgba(16,185,129,0.2)',
+                        borderColor: travelContext.isActive
+                          ? 'rgba(16,185,129,0.2)'
+                          : 'rgba(59,130,246,0.2)',
                       }}
                     >
-                      <View className="w-2 h-2 rounded-full bg-emerald-400 mr-2" />
-                      <Text className="text-emerald-400 text-sm font-semibold" style={{ fontFamily: 'DMSans_700Bold' }}>
-                        {activeTrip.destination}
+                      <View
+                        className="w-2 h-2 rounded-full mr-2"
+                        style={{
+                          backgroundColor: travelContext.isActive ? '#34D399' : '#60A5FA',
+                        }}
+                      />
+                      <Text
+                        className="text-sm font-semibold"
+                        style={{
+                          fontFamily: 'DMSans_700Bold',
+                          color: travelContext.isActive ? '#34D399' : '#60A5FA',
+                        }}
+                      >
+                        {travelContext.city}
                       </Text>
-                      <View style={{ width: 1, height: 14, backgroundColor: 'rgba(16,185,129,0.3)', marginHorizontal: 10 }} />
-                      <Text className="text-emerald-400/70 text-sm" style={{ fontFamily: 'DMSans_500Medium' }}>
-                        {weather.temperature}° {getWeatherIcon(weather.condition)}
+                      <View
+                        style={{
+                          width: 1,
+                          height: 14,
+                          backgroundColor: travelContext.isActive
+                            ? 'rgba(16,185,129,0.3)'
+                            : 'rgba(59,130,246,0.3)',
+                          marginHorizontal: 10,
+                        }}
+                      />
+                      <Text
+                        className="text-sm"
+                        style={{
+                          fontFamily: 'DMSans_500Medium',
+                          color: travelContext.isActive
+                            ? 'rgba(52,211,153,0.7)'
+                            : 'rgba(96,165,250,0.7)',
+                        }}
+                      >
+                        {weather.temperature}{'\u00B0'} {getWeatherIcon(weather.condition)}
                       </Text>
-                      <ChevronRight size={14} color="#34D399" style={{ marginLeft: 4 }} />
+                      {travelContext.label && (
+                        <>
+                          <View
+                            style={{
+                              width: 1,
+                              height: 14,
+                              backgroundColor: travelContext.isActive
+                                ? 'rgba(16,185,129,0.3)'
+                                : 'rgba(59,130,246,0.3)',
+                              marginHorizontal: 10,
+                            }}
+                          />
+                          <Text
+                            className="text-xs"
+                            style={{
+                              fontFamily: 'DMSans_500Medium',
+                              color: travelContext.isActive
+                                ? 'rgba(52,211,153,0.7)'
+                                : 'rgba(96,165,250,0.7)',
+                            }}
+                          >
+                            {travelContext.label}
+                          </Text>
+                        </>
+                      )}
+                      <ChevronRight
+                        size={14}
+                        color={travelContext.isActive ? '#34D399' : '#60A5FA'}
+                        style={{ marginLeft: 4 }}
+                      />
                     </Pressable>
                   </Animated.View>
                 )}
               </View>
 
-              {/* Notification bell — refined */}
+              {/* Notification bell â€” refined */}
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1362,7 +1510,7 @@ export default function TodayScreen() {
             )}
           </ResponsiveContainer>
 
-          {/* Contextual Quick Actions — frosted glass bar */}
+          {/* Contextual Quick Actions â€” frosted glass bar */}
           <ResponsiveContainer>
             <Animated.View
               entering={FadeInDown.duration(500).delay(200)}
@@ -1442,7 +1590,7 @@ export default function TodayScreen() {
               </View>
             )}
 
-            {/* In Progress — items currently underway (in-flight, hotel stays, etc.) */}
+            {/* In Progress â€” items currently underway (in-flight, hotel stays, etc.) */}
             {inProgressItems.length > 0 && (
               <View className="mt-8 px-5 pb-8">
               <View className="flex-row items-center mb-4">
@@ -1474,7 +1622,7 @@ export default function TodayScreen() {
         </ScrollView>
       </SafeAreaView>
 
-      {/* Offline toast — shown after pull-to-refresh fails */}
+      {/* Offline toast â€” shown after pull-to-refresh fails */}
       <OfflineToast
         visible={showOfflineToast}
         onDismiss={() => setShowOfflineToast(false)}

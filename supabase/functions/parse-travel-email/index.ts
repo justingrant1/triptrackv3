@@ -659,7 +659,7 @@ async function isDuplicateReservation(
     }
   }
 
-  // Check 3: Same confirmation number (for non-flight types)
+  // Check 3: Same confirmation number in THIS trip (for non-flight types)
   // For flights, we skip this since multiple legs share the same confirmation
   if (reservation.confirmation_number && reservation.type !== 'flight') {
     const { data: byConfirmation } = await supabase
@@ -670,7 +670,24 @@ async function isDuplicateReservation(
       .maybeSingle();
 
     if (byConfirmation) {
-      console.log(`[Dedup] Found duplicate by confirmation number: ${reservation.confirmation_number}`);
+      console.log(`[Dedup] Found duplicate by confirmation number in trip: ${reservation.confirmation_number}`);
+      return true;
+    }
+  }
+
+  // Check 4: Same confirmation number across ALL user's trips (cross-trip dedup)
+  // This catches duplicates when concurrent webhook deliveries create different trips
+  // and both try to insert the same reservation. We check ALL trips for the user.
+  if (reservation.confirmation_number && reservation.type !== 'flight') {
+    const { data: crossTripMatch } = await supabase
+      .from('reservations')
+      .select('id, trip_id')
+      .eq('confirmation_number', reservation.confirmation_number)
+      .eq('type', reservation.type)
+      .limit(1);
+
+    if (crossTripMatch && crossTripMatch.length > 0) {
+      console.log(`[Dedup] Found duplicate by confirmation number across trips: ${reservation.confirmation_number} (in trip ${crossTripMatch[0].trip_id})`);
       return true;
     }
   }
@@ -694,15 +711,21 @@ async function generateEmailHash(from: string, subject: string, body: string): P
 
 /**
  * Atomically claim an email for processing (prevents race conditions).
- * Inserts a 'processing' record — if it already exists, returns false (already claimed).
- * This replaces the old check-then-mark pattern which had a TOCTOU race condition
- * where two simultaneous webhook deliveries could both pass the check.
+ * Inserts a 'processing' record — if it already exists, returns 'already_claimed'.
+ * 
+ * Returns:
+ *   'claimed'         — Successfully claimed, proceed with processing
+ *   'already_claimed' — Another request already claimed this email
+ *   'stale_reclaimed' — Was stuck in 'processing' for >2 min, reclaimed
+ *   'reforward'       — Was processed >5 min ago, user is intentionally re-forwarding
  */
+type ClaimResult = 'claimed' | 'already_claimed' | 'stale_reclaimed' | 'reforward';
+
 async function claimEmailForProcessing(
   supabase: any,
   userId: string,
   emailHash: string
-): Promise<boolean> {
+): Promise<ClaimResult> {
   try {
     // Try to insert a 'processing' record. If the unique constraint
     // (user_id, gmail_message_id) is violated, the email was already claimed.
@@ -716,19 +739,81 @@ async function claimEmailForProcessing(
       });
 
     if (error) {
-      // Unique constraint violation = already claimed by another request
+      // Unique constraint violation = already exists
       if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('unique')) {
-        return false;
+        // Check the existing record's status and age
+        const { data: existing } = await supabase
+          .from('processed_gmail_messages')
+          .select('status, processed_at')
+          .eq('user_id', userId)
+          .eq('gmail_message_id', emailHash)
+          .maybeSingle();
+
+        if (existing) {
+          const ageMs = Date.now() - new Date(existing.processed_at).getTime();
+          const ageMinutes = ageMs / 60000;
+
+          // Case 1: Stuck in 'processing' for >2 minutes (crashed/timed out)
+          if (existing.status === 'processing' && ageMinutes > 2) {
+            console.log(`[Claim] Stale 'processing' record (${ageMinutes.toFixed(1)} min old) — reclaiming`);
+            await supabase
+              .from('processed_gmail_messages')
+              .update({ status: 'processing', processed_at: new Date().toISOString() })
+              .eq('user_id', userId)
+              .eq('gmail_message_id', emailHash);
+            return 'stale_reclaimed';
+          }
+
+          // Case 2: Successfully processed >5 minutes ago (intentional re-forward)
+          if (existing.status === 'processed' && ageMinutes > 5) {
+            console.log(`[Claim] Previously processed ${ageMinutes.toFixed(1)} min ago — treating as intentional re-forward`);
+            await supabase
+              .from('processed_gmail_messages')
+              .update({ status: 'processing', processed_at: new Date().toISOString() })
+              .eq('user_id', userId)
+              .eq('gmail_message_id', emailHash);
+            return 'reforward';
+          }
+
+          // Case 3: Failed previously — allow retry
+          if (existing.status === 'failed') {
+            console.log(`[Claim] Previously failed — allowing retry`);
+            await supabase
+              .from('processed_gmail_messages')
+              .update({ status: 'processing', processed_at: new Date().toISOString() })
+              .eq('user_id', userId)
+              .eq('gmail_message_id', emailHash);
+            return 'stale_reclaimed';
+          }
+
+          // Case 4: Recently processed or currently processing — this is a webhook retry, skip it
+          console.log(`[Claim] Email already ${existing.status} (${ageMinutes.toFixed(1)} min ago) — skipping webhook retry`);
+          return 'already_claimed';
+        }
+
+        // Couldn't read existing record — skip to be safe
+        return 'already_claimed';
       }
-      // Some other error — log but allow processing (fail open)
-      console.warn(`[Claim] Unexpected error claiming email:`, error);
-      return true;
+
+      // Some other DB error — log it but DON'T fail open anymore.
+      // The PGRST204 "status column not found" error was causing all dedup to be bypassed.
+      // Instead, we'll retry once, and if it still fails, skip processing.
+      console.error(`[Claim] DB error claiming email:`, error);
+      
+      // If it's a schema cache error, try a direct approach without the status column
+      if (error.code === 'PGRST204' || error.message?.includes('schema cache')) {
+        console.warn(`[Claim] Schema cache error — table may need migration. Blocking duplicate processing.`);
+        return 'already_claimed';
+      }
+      
+      return 'already_claimed';
     }
 
-    return true; // Successfully claimed
-  } catch {
-    // On error, allow processing (fail open to avoid dropping emails)
-    return true;
+    return 'claimed'; // Successfully claimed
+  } catch (err) {
+    console.error(`[Claim] Exception claiming email:`, err);
+    // Don't fail open — block processing to prevent duplicates
+    return 'already_claimed';
   }
 }
 
@@ -759,6 +844,8 @@ async function markEmailProcessed(
 }
 
 serve(async (req) => {
+  let emailHash: string | undefined;
+  let userId: string | undefined;
   try {
     // CORS headers
     if (req.method === 'OPTIONS') {
@@ -855,47 +942,33 @@ serve(async (req) => {
       );
     }
 
-    const userId = profile.id;
+    userId = profile.id;
     console.log('Processing for user:', userId);
 
     // 1b. Atomic email deduplication — claim the hash BEFORE processing.
     // This prevents race conditions where two webhook deliveries of the same
     // email both pass the "already processed?" check simultaneously.
     // We insert a 'processing' record first; if it already exists, we skip.
-    const emailHash = await generateEmailHash(emailFrom, emailSubject, emailText);
-    const claimed = await claimEmailForProcessing(supabase, userId, emailHash);
+    emailHash = await generateEmailHash(emailFrom, emailSubject, emailText);
+    const claimResult = await claimEmailForProcessing(supabase, userId!, emailHash);
     
-    if (!claimed) {
-      // For email forwarding (plans+x@triptrack.ai), the user is intentionally
-      // re-sending the email. Delete the old processed record and re-claim it.
-      // This handles the case where a user deleted a trip and re-forwards the email.
-      console.log('Email already processed (hash:', emailHash, ') — clearing old record for re-processing (intentional forward)');
-      await supabase
-        .from('processed_gmail_messages')
-        .delete()
-        .eq('user_id', userId)
-        .eq('gmail_message_id', emailHash);
-      
-      // Re-claim after clearing
-      const reClaimed = await claimEmailForProcessing(supabase, userId, emailHash);
-      if (!reClaimed) {
-        console.log('Failed to re-claim email after clearing — skipping');
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: 'Email already processed',
-            skipped: true,
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
-      }
-      console.log('Email re-claimed successfully for re-processing');
+    if (claimResult === 'already_claimed') {
+      // This is a webhook retry or duplicate delivery — skip it
+      console.log(`Email already claimed (hash: ${emailHash}) — skipping duplicate webhook delivery`);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Email already being processed or recently processed',
+          skipped: true,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
-    console.log('Email hash:', emailHash, '— claimed for processing');
+    console.log(`Email hash: ${emailHash} — claim result: ${claimResult}`);
 
     // 1c. Fetch user's existing trips for AI context (helps with trip matching)
     const { data: existingTrips } = await supabase
@@ -931,7 +1004,7 @@ serve(async (req) => {
     if (!tripId) {
       // Trip creation failed (DB error) — return error
       console.log('[Trip Creation Failed] Could not create or find a matching trip');
-      await markEmailProcessed(supabase, userId, emailHash, 'failed_trip_creation');
+      await markEmailProcessed(supabase, userId!, emailHash!, 'failed_trip_creation');
       return new Response(
         JSON.stringify({
           success: false,
@@ -1124,7 +1197,7 @@ serve(async (req) => {
     }
 
     // 5b. Mark email as processed to prevent reprocessing
-    await markEmailProcessed(supabase, userId, emailHash, 'processed');
+    await markEmailProcessed(supabase, userId!, emailHash!, 'processed');
 
     // 6. Return success
     return new Response(
@@ -1142,6 +1215,19 @@ serve(async (req) => {
 
   } catch (error: any) {
     console.error('Error processing email:', error);
+
+    // Mark the email as 'failed' so it doesn't stay stuck in 'processing' forever.
+    // This allows future retries (the claim logic treats 'failed' as retryable).
+    try {
+      if (emailHash && userId) {
+        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+        await markEmailProcessed(supabase, userId!, emailHash!, 'failed');
+        console.log(`Marked email ${emailHash} as 'failed'`);
+      }
+    } catch (markError) {
+      console.warn('Failed to mark email as failed:', markError);
+    }
+
     return new Response(
       JSON.stringify({ error: error.message || 'Internal server error' }),
       {

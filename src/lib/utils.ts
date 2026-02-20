@@ -746,6 +746,60 @@ export const getDaysUntil = (date: Date): number => {
   return Math.ceil((target.getTime() - today.getTime()) / 86400000);
 };
 
+/**
+ * TIMEZONE-AWARE: Get the number of days until a date, using the destination's
+ * timezone to determine what "today" is.
+ * 
+ * Solves the cross-timezone badge bug: when tracking a Seoul trip (UTC+9) from
+ * New York (UTC-5), a trip starting Feb 18 should show "Starts today" when it's
+ * already Feb 18 in Seoul, even though it's still Feb 17 in New York.
+ * 
+ * Falls back to device timezone if no timezone offset is provided.
+ */
+export const getDaysUntilInTimezone = (date: Date, tzOffset: string | null | undefined): number => {
+  // Extract the target date components
+  const targetYear = date.getFullYear();
+  const targetMonth = date.getMonth() + 1; // 1-indexed
+  const targetDay = date.getDate();
+  
+  if (tzOffset) {
+    const offsetMinutes = parseOffsetMinutesExported(tzOffset);
+    if (offsetMinutes !== null) {
+      // Get current date in the destination's timezone
+      const nowUtcMs = Date.now();
+      const localMs = nowUtcMs + (offsetMinutes * 60 * 1000);
+      const localDate = new Date(localMs);
+      
+      const todayYear = localDate.getUTCFullYear();
+      const todayMonth = localDate.getUTCMonth() + 1;
+      const todayDay = localDate.getUTCDate();
+      
+      // Calculate difference in days using UTC dates to avoid DST issues
+      const todayMs = Date.UTC(todayYear, todayMonth - 1, todayDay);
+      const targetMs = Date.UTC(targetYear, targetMonth - 1, targetDay);
+      return Math.ceil((targetMs - todayMs) / 86400000);
+    }
+  }
+  
+  // Fallback: use device timezone
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  return Math.ceil((target.getTime() - today.getTime()) / 86400000);
+};
+
+/**
+ * Exported version of parseOffsetMinutes for use in getDaysUntilInTimezone.
+ * Parses a UTC offset string like "+09:00" or "-05:00" into total minutes.
+ */
+function parseOffsetMinutesExported(tzOffset: string | null | undefined): number | null {
+  if (!tzOffset) return null;
+  const m = tzOffset.match(/^([+-])(\d{1,2}):?(\d{2})$/);
+  if (!m) return null;
+  const sign = m[1] === '+' ? 1 : -1;
+  return sign * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10));
+}
+
 // Live status chip for reservations - makes the app feel alive
 export type LiveStatus = {
   label: string;

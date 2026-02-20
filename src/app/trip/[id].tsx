@@ -11,6 +11,8 @@ import {
   Ticket,
   Train,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
   Clock,
   MapPin,
   Copy,
@@ -909,6 +911,7 @@ function TripDetailScreenContent() {
   useFlightStatusPolling(id, flightReservations);
 
   const [refreshing, setRefreshing] = React.useState(false);
+  const [showExpenses, setShowExpenses] = React.useState(false);
 
   const handleRefresh = React.useCallback(async () => {
     if (!id) return;
@@ -1233,38 +1236,74 @@ function TripDetailScreenContent() {
               </View>
             </View>
 
-            {/* Expense Summary Card — upgraded with gradient accent */}
+            {/* Expense Summary — discreet collapsed pill, expandable */}
             {expenses && expenses.total > 0 && (
-              <Pressable
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  router.push('/(tabs)/receipts');
-                }}
-                style={{ marginTop: 16, borderRadius: 20, overflow: 'hidden' }}
-              >
-                <LinearGradient
-                  colors={['rgba(16,185,129,0.08)', 'rgba(16,185,129,0.02)']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={{ padding: 16, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(16,185,129,0.15)', flexDirection: 'row', alignItems: 'center' }}
+              <View style={{ marginTop: 12 }}>
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowExpenses(!showExpenses);
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(30,41,59,0.5)',
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: 'rgba(51,65,85,0.4)',
+                  }}
                 >
-                  <View style={{ backgroundColor: 'rgba(16,185,129,0.15)', padding: 10, borderRadius: 14 }}>
-                    <DollarSign size={20} color="#10B981" />
-                  </View>
-                  <View className="flex-1 ml-3">
-                    <Text className="text-white text-lg font-bold" style={{ fontFamily: 'SpaceMono_700Bold' }}>
-                      {formatCurrency(expenses.total)}
-                    </Text>
-                    <Text className="text-slate-400 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
-                      {expenses.count} receipt{expenses.count !== 1 ? 's' : ''}
-                      {expenses.byCategory && Object.keys(expenses.byCategory).length > 0 && (
-                        ` · ${Object.entries(expenses.byCategory).map(([cat, amt]) => `${cat} ${formatCurrency(amt as number)}`).join(', ')}`
-                      )}
-                    </Text>
-                  </View>
-                  <Receipt size={16} color="#64748B" />
-                </LinearGradient>
-              </Pressable>
+                  <Receipt size={14} color="#64748B" />
+                  <Text className="text-slate-400 text-xs ml-2" style={{ fontFamily: 'DMSans_500Medium' }}>
+                    {expenses.count} receipt{expenses.count !== 1 ? 's' : ''} · {formatCurrency(expenses.total)}
+                  </Text>
+                  <View style={{ flex: 1 }} />
+                  {showExpenses ? (
+                    <ChevronUp size={14} color="#64748B" />
+                  ) : (
+                    <ChevronDown size={14} color="#64748B" />
+                  )}
+                </Pressable>
+
+                {/* Expanded expense details */}
+                {showExpenses && (
+                  <Animated.View entering={FadeInDown.duration(250)}>
+                    <Pressable
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push('/(tabs)/receipts');
+                      }}
+                      style={{ marginTop: 8, borderRadius: 16, overflow: 'hidden' }}
+                    >
+                      <LinearGradient
+                        colors={['rgba(16,185,129,0.08)', 'rgba(16,185,129,0.02)']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={{ padding: 14, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(16,185,129,0.15)', flexDirection: 'row', alignItems: 'center' }}
+                      >
+                        <View style={{ backgroundColor: 'rgba(16,185,129,0.15)', padding: 8, borderRadius: 12 }}>
+                          <DollarSign size={18} color="#10B981" />
+                        </View>
+                        <View className="flex-1 ml-3">
+                          <Text className="text-white text-base font-bold" style={{ fontFamily: 'SpaceMono_700Bold' }}>
+                            {formatCurrency(expenses.total)}
+                          </Text>
+                          {expenses.byCategory && Object.keys(expenses.byCategory).length > 0 && (
+                            <Text className="text-slate-400 text-xs mt-0.5" style={{ fontFamily: 'DMSans_400Regular' }}>
+                              {Object.entries(expenses.byCategory).map(([cat, amt]) => `${cat} ${formatCurrency(amt as number)}`).join(' · ')}
+                            </Text>
+                          )}
+                        </View>
+                        <Text className="text-slate-500 text-xs" style={{ fontFamily: 'DMSans_500Medium' }}>
+                          View All →
+                        </Text>
+                      </LinearGradient>
+                    </Pressable>
+                  </Animated.View>
+                )}
+              </View>
             )}
           </View>
         )}
