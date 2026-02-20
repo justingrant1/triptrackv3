@@ -230,10 +230,14 @@ Rules:
 - Extract ALL reservations from the email (flights, hotels, cars, etc.)
 - Use ISO 8601 format for all timestamps (YYYY-MM-DDTHH:MM:SS)
 - IMPORTANT: Always use LOCAL time at the departure/arrival/check-in location. Do NOT append Z or timezone offsets.
+- ⚠️ TIME ACCURACY: Be very careful with 12:00. In 24-hour format: 12:00 = noon (12 PM), 00:00 = midnight (12 AM). If the email says "12:00" or "12 PM" or "noon", use T12:00:00 NOT T00:00:00. Only use T00:00:00 for actual midnight departures.
+- ⚠️ MISSING TIMES: If the email does NOT include a specific departure/check-in time, use a reasonable default: T09:00:00 for morning activities (flights, trains, car pickups), T15:00:00 for hotel check-ins, T12:00:00 for events. Add "Time Estimated": true to the details object.
+- ⚠️ TIMEZONE REQUIRED: You MUST always provide "Location Timezone" for non-flight reservations (hotels, trains, cars, events, meetings). Look up the UTC offset for the city. For example: Marrakech, Morocco = "+01:00", Tokyo = "+09:00", New York = "-05:00", London = "+00:00", Paris = "+01:00", Dubai = "+04:00", Bali = "+08:00".
 - For flights: departure time = local time at departure airport, arrival time = local time at arrival airport
 - For flights: extract airline, flight number, departure/arrival times, airports, seat, gate
 - For hotels: extract hotel name, check-in/out times, room type, address
 - For cars: extract company, pickup/return times, vehicle type, location
+- For trains/buses: extract operator, departure/arrival times, stations, seat/class if available
 - Infer trip name from destination and purpose if not explicit
 - If multiple reservations, group them under one trip
 - Return ONLY the JSON, no other text

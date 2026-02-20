@@ -882,6 +882,9 @@ Rules:
 - Each flight leg = separate reservation. MIA→LAX is one, LAX→HND is another.
 - All reservations from the same email share the same "destination" (the FINAL destination), "country", "region", and "trip_dates" (spanning all legs).
 - For connecting flights, the destination is the final arrival city, not the layover.
+- ⚠️ TIME ACCURACY: Be very careful with 12:00. In 24-hour format: 12:00 = noon (12 PM), 00:00 = midnight (12 AM). If the email says "12:00" or "12 PM" or "noon", use T12:00:00 NOT T00:00:00. Only use T00:00:00 for actual midnight departures.
+- ⚠️ MISSING TIMES: If the email does NOT include a specific departure/check-in time, use a reasonable default: T09:00:00 for morning activities (flights, trains, car pickups), T15:00:00 for hotel check-ins, T12:00:00 for events. Add "Time Estimated": true to the details object.
+- ⚠️ TIMEZONE REQUIRED: You MUST always provide "Location Timezone" for non-flight reservations (hotels, trains, cars, events, meetings). Look up the UTC offset for the city. For example: Marrakech, Morocco = "+01:00", Tokyo = "+09:00", New York = "-05:00", London = "+00:00", Paris = "+01:00", Dubai = "+04:00", Bali = "+08:00".
 - "country" should be the full country name of the final destination.
 - "region" should be the state, province, island, or well-known sub-region (e.g., "Bali" for anywhere in Bali, "Tuscany" for anywhere in Tuscany, "California" for anywhere in California). Use null if not meaningful.
 - Use null for any field you cannot determine — never use empty strings.
