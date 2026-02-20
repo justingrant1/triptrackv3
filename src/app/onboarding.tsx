@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, Pressable, Dimensions, FlatList, ViewToken } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { View, Text, Pressable, Dimensions, FlatList, ViewToken, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -12,6 +12,8 @@ import {
   Radar,
   Clock,
   MapPin,
+  Shield,
+  ExternalLink,
 } from 'lucide-react-native';
 import Animated, {
   FadeInDown,
@@ -19,7 +21,6 @@ import Animated, {
   useSharedValue,
   interpolate,
   Extrapolation,
-  useAnimatedScrollHandler,
   withRepeat,
   withTiming,
   withSequence,
@@ -35,7 +36,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface OnboardingSlide {
   id: string;
-  type: 'hero' | 'import' | 'flight' | 'assistant';
+  type: 'hero' | 'import' | 'flight' | 'assistant' | 'privacy';
   accentColor: string;
   gradient: [string, string];
 }
@@ -64,6 +65,12 @@ const slides: OnboardingSlide[] = [
     type: 'assistant',
     accentColor: '#F59E0B',
     gradient: ['#F59E0B', '#D97706'],
+  },
+  {
+    id: '5',
+    type: 'privacy',
+    accentColor: '#06B6D4',
+    gradient: ['#06B6D4', '#0891B2'],
   },
 ];
 
@@ -411,63 +418,145 @@ function AssistantSlide() {
   );
 }
 
-// ─── Slide Renderer ──────────────────────────────────────────
+// ─── Slide 5: Privacy & AI Data ──────────────────────────────
 
-function SlideContent({ item, index, scrollX }: { item: OnboardingSlide; index: number; scrollX: { value: number } }) {
-  const animatedStyle = useAnimatedStyle(() => {
-    const inputRange = [
-      (index - 1) * SCREEN_WIDTH,
-      index * SCREEN_WIDTH,
-      (index + 1) * SCREEN_WIDTH,
-    ];
-
-    const scale = interpolate(scrollX.value, inputRange, [0.85, 1, 0.85], Extrapolation.CLAMP);
-    const opacity = interpolate(scrollX.value, inputRange, [0, 1, 0], Extrapolation.CLAMP);
-    const translateY = interpolate(scrollX.value, inputRange, [30, 0, 30], Extrapolation.CLAMP);
-
-    return {
-      transform: [{ scale }, { translateY }],
-      opacity,
-    };
-  });
+function PrivacySlide() {
+  const dataItems = [
+    {
+      emoji: '💬',
+      title: 'Chat messages & trip details',
+      desc: 'Sent to power the AI concierge',
+    },
+    {
+      emoji: '📧',
+      title: 'Travel confirmation emails',
+      desc: 'Parsed to auto-create trips',
+    },
+    {
+      emoji: '🧾',
+      title: 'Receipt & boarding pass images',
+      desc: 'Scanned to extract details',
+    },
+  ];
 
   return (
-    <View style={{ width: SCREEN_WIDTH }}>
-      <Animated.View style={[animatedStyle, { flex: 1 }]}>
-        {item.type === 'hero' && <HeroSlide />}
-        {item.type === 'import' && <ImportSlide />}
-        {item.type === 'flight' && <FlightSlide />}
-        {item.type === 'assistant' && <AssistantSlide />}
+    <View className="flex-1 items-center justify-center px-8">
+      {/* Shield icon */}
+      <View
+        className="w-24 h-24 rounded-full items-center justify-center mb-6"
+        style={{ backgroundColor: 'rgba(6,182,212,0.12)' }}
+      >
+        <Shield size={48} color="#06B6D4" strokeWidth={1.5} />
+      </View>
+
+      {/* Heading */}
+      <Text
+        className="text-white text-3xl font-bold text-center mb-2"
+        style={{ fontFamily: 'DMSans_700Bold', letterSpacing: -0.3 }}
+      >
+        Your Data & AI
+      </Text>
+      <Text
+        className="text-slate-400 text-base text-center mb-8"
+        style={{ fontFamily: 'DMSans_400Regular', lineHeight: 22 }}
+      >
+        TripTrack sends the following data to{' '}
+        <Text style={{ color: '#06B6D4', fontFamily: 'DMSans_700Bold' }}>OpenAI</Text>
+        {' '}to power smart features:
+      </Text>
+
+      {/* Data items */}
+      <View className="w-full gap-3 mb-6">
+        {dataItems.map((item, index) => (
+          <Animated.View
+            key={index}
+            entering={FadeInDown.duration(400).delay(200 + index * 100)}
+          >
+            <View
+              className="flex-row items-center rounded-2xl p-4 border"
+              style={{
+                backgroundColor: 'rgba(6,182,212,0.06)',
+                borderColor: 'rgba(6,182,212,0.15)',
+              }}
+            >
+              <Text style={{ fontSize: 24, marginRight: 12 }}>{item.emoji}</Text>
+              <View className="flex-1">
+                <Text
+                  className="text-white text-sm font-semibold"
+                  style={{ fontFamily: 'DMSans_700Bold' }}
+                >
+                  {item.title}
+                </Text>
+                <Text
+                  className="text-slate-400 text-xs mt-0.5"
+                  style={{ fontFamily: 'DMSans_400Regular' }}
+                >
+                  {item.desc}
+                </Text>
+              </View>
+            </View>
+          </Animated.View>
+        ))}
+      </View>
+
+      {/* Disclaimer + Privacy Policy link */}
+      <Animated.View entering={FadeInDown.duration(400).delay(600)}>
+        <Text
+          className="text-slate-500 text-xs text-center mb-3"
+          style={{ fontFamily: 'DMSans_400Regular', lineHeight: 18 }}
+        >
+          Your data is processed securely and never sold.{'\n'}
+          By continuing, you consent to this data sharing.
+        </Text>
+        <Pressable
+          onPress={() => Linking.openURL('https://triptrack.ai/privacy')}
+          className="flex-row items-center justify-center"
+        >
+          <ExternalLink size={13} color="#06B6D4" />
+          <Text
+            className="text-cyan-400 text-sm ml-1.5 underline"
+            style={{ fontFamily: 'DMSans_500Medium' }}
+          >
+            Privacy Policy
+          </Text>
+        </Pressable>
       </Animated.View>
+    </View>
+  );
+}
+
+// ─── Slide Renderer (no scroll-based animation — always visible) ─────
+
+function SlideContent({ item }: { item: OnboardingSlide }) {
+  return (
+    <View style={{ width: SCREEN_WIDTH, flex: 1 }}>
+      {item.type === 'hero' && <HeroSlide />}
+      {item.type === 'import' && <ImportSlide />}
+      {item.type === 'flight' && <FlightSlide />}
+      {item.type === 'assistant' && <AssistantSlide />}
+      {item.type === 'privacy' && <PrivacySlide />}
     </View>
   );
 }
 
 // ─── Paginator ───────────────────────────────────────────────
 
-function Paginator({ data, scrollX }: { data: OnboardingSlide[]; scrollX: { value: number } }) {
+function Paginator({ data, currentIndex }: { data: OnboardingSlide[]; currentIndex: number }) {
   return (
     <View className="flex-row justify-center items-center mb-6">
-      {data.map((_, index) => {
-        const animatedStyle = useAnimatedStyle(() => {
-          const inputRange = [
-            (index - 1) * SCREEN_WIDTH,
-            index * SCREEN_WIDTH,
-            (index + 1) * SCREEN_WIDTH,
-          ];
-
-          const width = interpolate(scrollX.value, inputRange, [8, 28, 8], Extrapolation.CLAMP);
-          const opacity = interpolate(scrollX.value, inputRange, [0.25, 1, 0.25], Extrapolation.CLAMP);
-          const bgOpacity = interpolate(scrollX.value, inputRange, [0.3, 1, 0.3], Extrapolation.CLAMP);
-
-          return { width, opacity: bgOpacity };
-        });
-
+      {data.map((slide, index) => {
+        const isActive = index === currentIndex;
         return (
-          <Animated.View
+          <View
             key={index}
-            style={[animatedStyle, { backgroundColor: data[index].accentColor }]}
-            className="h-2 rounded-full mx-1"
+            style={{
+              width: isActive ? 28 : 8,
+              height: 8,
+              borderRadius: 4,
+              marginHorizontal: 4,
+              backgroundColor: slide.accentColor,
+              opacity: isActive ? 1 : 0.3,
+            }}
           />
         );
       })}
@@ -480,43 +569,46 @@ function Paginator({ data, scrollX }: { data: OnboardingSlide[]; scrollX: { valu
 export default function OnboardingScreen() {
   const router = useRouter();
   const [currentIndex, setCurrentIndex] = useState(0);
-  const scrollX = useSharedValue(0);
+  const currentIndexRef = useRef(0);
   const slidesRef = useRef<FlatList>(null);
 
-  const scrollHandler = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollX.value = event.contentOffset.x;
-    },
-  });
-
   const viewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    if (viewableItems.length > 0) {
-      setCurrentIndex(viewableItems[0].index || 0);
+    if (viewableItems.length > 0 && viewableItems[0].index != null) {
+      currentIndexRef.current = viewableItems[0].index;
+      setCurrentIndex(viewableItems[0].index);
     }
   }).current;
 
   const viewConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
 
-  const handleNext = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const scrollToSlide = useCallback((index: number) => {
+    slidesRef.current?.scrollToOffset({ offset: index * SCREEN_WIDTH, animated: true });
+  }, []);
 
-    if (currentIndex < slides.length - 1) {
-      slidesRef.current?.scrollToIndex({ index: currentIndex + 1 });
+  const handleNext = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const idx = currentIndexRef.current;
+
+    if (idx < slides.length - 1) {
+      scrollToSlide(idx + 1);
     } else {
       handleGetStarted();
     }
-  };
+  }, []);
 
-  const handleSkip = () => {
+  const handleSkip = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    handleGetStarted();
-  };
+    // Skip to the privacy/consent slide (last slide) — user must see it before proceeding
+    scrollToSlide(slides.length - 1);
+  }, []);
 
   const handleGetStarted = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    // Mark onboarding as complete
+    // Mark onboarding as complete + AI data consent granted
     await AsyncStorage.setItem('onboarding_complete', 'true');
+    await AsyncStorage.setItem('ai_data_consent', 'true');
+    await AsyncStorage.setItem('ai_data_consent_date', new Date().toISOString());
 
     // If already authenticated (e.g. signed up via Apple Sign-In), go straight to tabs
     const currentUser = useAuthStore.getState().user;
@@ -540,9 +632,8 @@ export default function OnboardingScreen() {
       <SafeAreaView className="flex-1" edges={['top', 'bottom']}>
         {/* Skip Button */}
         {!isLastSlide && (
-          <Animated.View
-            entering={FadeInDown.duration(500)}
-            className="absolute top-4 right-5 z-10"
+          <View
+            style={{ position: 'absolute', top: 16, right: 20, zIndex: 10 }}
           >
             <Pressable
               onPress={handleSkip}
@@ -556,30 +647,34 @@ export default function OnboardingScreen() {
                 Skip
               </Text>
             </Pressable>
-          </Animated.View>
+          </View>
         )}
 
-        {/* Slides */}
-        <Animated.FlatList
+        {/* Slides — using regular FlatList for reliable scrollToIndex */}
+        <FlatList
           data={slides}
-          renderItem={({ item, index }) => (
-            <SlideContent item={item} index={index} scrollX={scrollX} />
+          renderItem={({ item }) => (
+            <SlideContent item={item} />
           )}
           horizontal
           showsHorizontalScrollIndicator={false}
           pagingEnabled
           bounces={false}
           keyExtractor={(item) => item.id}
-          onScroll={scrollHandler}
           onViewableItemsChanged={viewableItemsChanged}
           viewabilityConfig={viewConfig}
           ref={slidesRef}
           scrollEventThrottle={16}
+          getItemLayout={(_, index) => ({
+            length: SCREEN_WIDTH,
+            offset: SCREEN_WIDTH * index,
+            index,
+          })}
         />
 
         {/* Bottom Section */}
         <View className="px-6 pb-6">
-          <Paginator data={slides} scrollX={scrollX} />
+          <Paginator data={slides} currentIndex={currentIndex} />
 
           {/* Next / Get Started Button */}
           <Pressable
